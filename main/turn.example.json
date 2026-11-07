@@ -1,0 +1,5 @@
+{
+  "host": "turn.example.org:3478",
+  "user": "p2pchat",
+  "pass": "change-me"
+}

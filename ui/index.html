@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data: p2pblob:; media-src blob: mediastream:; base-uri 'none'; form-action 'none'">
+<title>P2P Chat</title>
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app" class="app">
+  <aside class="sidebar">
+    <div class="side-resize" id="sideResize" title="Drag to resize"></div>
+    <div class="side-top">
+      <div class="brand"><span class="logo"></span>P2P Chat</div>
+      <button class="icon-btn" id="btnAdd" title="Add contact (⌘N)">+</button>
+    </div>
+    <div class="search"><input id="search" placeholder="Search" spellcheck="false"></div>
+    <div class="contacts" id="contacts"></div>
+    <div class="side-bottom" id="sideBottom">
+      <div class="me" id="meRow">
+        <div class="avatar" id="meAvatar"></div>
+        <div class="me-text"><div class="me-name" id="meName">…</div><div class="me-sub" id="meSub"></div></div>
+        <button class="icon-btn" id="btnSettings" title="Settings">⚙</button>
+      </div>
+      <button class="shield" id="shield"><span class="dot"></span><span id="shieldText">checking</span></button>
+      <div class="mode-row" id="modeRow" title="Window mode (change in Settings or with the mode hotkey)"><span class="dot"></span><span id="modeText">Overlap</span></div>
+      <div class="relay-row" id="relayRow" title="Relay link"><span class="dot"></span><span id="relayText">No relay · local network only</span></div>
+      <div class="opacity-row" id="opacityRow" title="Window opacity. Slide, or press ⌘+ / ⌘- (Win+ / Win- on Windows, also Ctrl+Alt+ / -) while this window is focused.">
+        <span class="opacity-ico">◐</span>
+        <input type="range" id="opacity" min="20" max="100" step="1" value="100" aria-label="Window opacity">
+        <span class="opacity-val" id="opacityVal">100%</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="empty" id="empty">
+      <button class="icon-btn nav-btn empty-nav" id="btnNav2" title="Show contact list (⌘B)">☰</button>
+      <div class="empty-art"></div>
+      <h2>Nothing here is on a server</h2>
+      <p>Pick a contact, or add one by pasting their invite. Messages go straight to the other machine, encrypted end to end. History lives in your encrypted vault and can be restored from the other side.</p>
+      <div class="row"><button class="primary" id="emptyAdd">Add a contact</button><button id="emptyInvite">Show my invite</button></div>
+    </div>
+
+    <div class="chat hidden" id="chat">
+      <header class="chat-head">
+        <button class="icon-btn nav-btn" id="btnNav" title="Toggle contact list (⌘B)">☰</button>
+        <div class="avatar" id="chatAvatar"></div>
+        <div class="chat-title">
+          <div class="chat-name"><span id="chatName"></span><span class="verified hidden" id="chatVerified" title="Safety number verified">✓</span></div>
+          <div class="chat-sub" id="chatSub"></div>
+        </div>
+        <div class="chat-actions">
+          <span class="share-pill hidden" id="sharePill"></span>
+          <div class="share-ctl">
+            <button class="share-btn" id="btnShare" title="Send your screen to this contact, one click">⇡ Share screen</button>
+            <button class="icon-btn share-mode" id="btnShareMode" title="One way or two way">▾</button>
+            <div class="menu hidden" id="shareMenu">
+              <button data-mode="one"><b>One way</b><span>Only your screen and voice are sent</span></button>
+              <button data-mode="two"><b>Two way</b><span>They are asked to share their screen too</span></button>
+            </div>
+          </div>
+          <button class="icon-btn hidden" id="btnMic" title="Microphone">🎙</button>
+          <button class="icon-btn" id="btnInfo" title="Contact info and safety number">ⓘ</button>
+          <button class="icon-btn" id="btnMore" title="More">⋯</button>
+        </div>
+      </header>
+      <section class="viewer hidden" id="viewer">
+        <video id="viewerVideo" autoplay playsinline></video>
+        <div class="viewer-bar">
+          <span class="viewer-name" id="viewerName"></span><span class="viewer-stats" id="viewerStats"></span>
+          <span class="spacer"></span>
+          <button id="viewerMute" title="Mute their sound">🔊</button>
+          <button id="viewerTalk" title="Send your microphone so they hear you">🎙 Talk</button>
+          <button id="viewerShareBack" title="Share your screen too">Share mine</button>
+          <button id="viewerFull" title="Fullscreen (Esc leaves)">⤢</button>
+          <button class="danger" id="viewerEnd" title="End the screen share for both">End</button>
+        </div>
+      </section>
+      <div class="messages" id="messages"></div>
+      <button class="jump hidden" id="jump">↓ New messages</button>
+      <div class="typing hidden" id="typing"><span></span><span></span><span></span></div>
+      <footer class="composer" id="composer">
+        <div class="code-bar hidden" id="codeBar">
+          <span class="code-label">Code</span>
+          <select id="codeLang"><option value="">auto</option><option>js</option><option>ts</option><option>py</option><option>go</option><option>rs</option><option>c</option><option>sh</option><option>sql</option><option>json</option><option>html</option><option>css</option><option>yaml</option></select>
+          <span class="code-hint">⌘↩ to send · Esc to leave code mode</span>
+        </div>
+        <div class="composer-row">
+          <button class="icon-btn" id="btnCode" title="Code snippet (⌘E)">&lt;/&gt;</button>
+          <button class="icon-btn shot" id="btnShot" title="Send a screenshot of your screen. The chat window itself is left out.">📷</button>
+          <textarea id="input" rows="1" placeholder="Message" spellcheck="true"></textarea>
+          <button class="send" id="btnSend" title="Send (↩)">➤</button>
+        </div>
+      </footer>
+    </div>
+  </main>
+
+  <div class="modal-backdrop hidden" id="backdrop"></div>
+
+  <div class="modal hidden" id="mAdd">
+    <h3>Add a contact</h3>
+    <p class="muted">Paste the invite they sent you. It carries their address and public key. Nothing is uploaded anywhere.</p>
+    <textarea id="addInvite" rows="4" placeholder="p2pchat2:…" spellcheck="false"></textarea>
+    <div class="err hidden" id="addErr"></div>
+    <div class="modal-actions"><button id="addPaste">Paste from clipboard</button><span class="spacer"></span><button class="ghost" data-close>Cancel</button><button class="primary" id="addGo">Add &amp; connect</button></div>
+    <div class="divider"><span>or let them add you</span></div>
+    <div class="row"><button id="addShowInvite">Show my invite</button><button id="addDiscover">LAN discovery: off</button></div>
+    <div class="peers hidden" id="peers"></div>
+  </div>
+
+  <div class="modal hidden" id="mInvite">
+    <h3>Your invite</h3>
+    <p class="muted">One-time. Send it over any channel. Whoever uses it becomes a contact; then compare safety numbers.</p>
+    <textarea id="myInvite" rows="4" readonly></textarea>
+    <div class="modal-actions"><button class="primary" id="inviteCopy">Copy</button><button id="inviteNew">New invite</button><span class="spacer"></span><button class="ghost" data-close>Done</button></div>
+  </div>
+
+  <div class="modal hidden" id="mInfo">
+    <div class="info-head"><div class="avatar lg" id="infoAvatar"></div><div><h3 id="infoName"></h3><div class="muted" id="infoAddr"></div></div></div>
+    <label>Safety number</label>
+    <div class="safety" id="infoSafety"></div>
+    <p class="muted">Read it aloud to each other. Same number on both screens means nobody is between you. There is no directory to check against, so this is the whole check.</p>
+    <label class="check"><input type="checkbox" id="infoVerified"> Marked as verified</label>
+    <label>Name</label>
+    <input id="infoRename">
+    <div class="modal-actions">
+      <button id="infoHistory" title="Ask the peer to send their copy of this conversation">Restore history from peer</button>
+      <button class="danger ghost" id="infoRemove">Remove contact</button>
+      <span class="spacer"></span><button class="primary" data-close>Done</button>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="mSettings">
+    <h3>Settings</h3>
+    <label>Your display name</label>
+    <input id="setName" maxlength="64">
+    <label>Show / hide hotkey</label>
+    <div class="row"><input id="setHotkey" readonly placeholder="click, then press keys"><button id="hotkeyReset" class="ghost">Reset</button></div>
+    <div class="muted small">The app has no Dock or taskbar presence. This hotkey and the menu-bar icon are the only ways to bring it back.</div>
+    <div class="err hidden" id="hotkeyErr"></div>
+    <label>Window mode</label>
+    <div class="seg" id="mode"><button data-v="overlap">Overlap</button><button data-v="top">On top</button><button data-v="overlay">Overlay</button></div>
+    <div class="muted small" id="modeHint"></div>
+    <label>Window-mode hotkey</label>
+    <div class="row"><input id="setModeHotkey" readonly placeholder="click, then press keys"><button id="modeHotkeyReset" class="ghost">Reset</button></div>
+    <div class="muted small">Cycles Overlap → On top → Overlay. In Overlay the mouse goes through the window, so this key is the way back.</div>
+    <div class="err hidden" id="modeHotkeyErr"></div>
+    <label>Relay (for contacts outside your network)</label>
+    <div class="row"><input id="setRelay" placeholder="relay://host:port/key" spellcheck="false"><span class="pill" id="relayPill">off</span></div>
+    <div class="muted small">Without a relay, only people on your local network can reach you. The relay sees random addresses and ciphertext, never names, keys or messages. Your invites carry it, so contacts pick it up automatically.</div>
+    <div class="err hidden" id="relayErr"></div>
+    <label>Appearance</label>
+    <div class="seg" id="theme"><button data-v="system">System</button><button data-v="dark">Dark</button><button data-v="light">Light</button></div>
+    <label class="check"><input type="checkbox" id="setProtection"> Block screenshots and screen recording</label>
+    <div class="muted small" id="setProtectionHow"></div>
+    <label>Screen share and voice</label>
+    <div class="seg" id="shareModeSeg"><button data-v="one">One way</button><button data-v="two">Two way</button></div>
+    <div class="muted small">What the Share button does: one way sends your screen and voice; two way also asks the contact to share theirs. The ▾ next to the button switches it per share.</div>
+    <div class="row"><input id="setTurn" placeholder="call server host:port" spellcheck="false"><input id="setTurnUser" placeholder="user" spellcheck="false" style="max-width:120px"><input id="setTurnPass" type="password" placeholder="password" style="max-width:150px"></div>
+    <div class="muted small">The call server (STUN/TURN) passes the share between two home networks that cannot reach each other directly. It only sees encrypted media. Leave the host empty to allow direct and local-network shares only.</div>
+    <label class="check"><input type="checkbox" id="setCallsRelayOnly"> Route shares through the call server only (hides your IP address from the contact)</label>
+    <label>Code blocks</label>
+    <label class="check"><input type="checkbox" id="setCodeWrap"> Wrap long lines (no sideways scrolling)</label>
+    <label class="check"><input type="checkbox" id="setCodeCollapse"> Collapse blocks longer than 18 lines, with a "Show all" button</label>
+    <label>New-message pop-up</label>
+    <label class="check"><input type="checkbox" id="setPopups"> Pop up new messages when the chat is hidden or not in front</label>
+    <label class="check"><input type="checkbox" id="setPopupText"> Include the message text (off: only "sent a message")</label>
+    <div class="row"><button id="popupPreview">Preview pop-up</button><span class="muted small">Drawn by the app at the top-right of the screen: no app name, no Notification Center entry, never takes focus, gone after 6 s, capture-blocked like the window.</span></div>
+    <label class="check" id="autostartRow"><input type="checkbox" id="setAutostart"> Start at login (hidden)</label>
+    <label class="check"><input type="checkbox" id="setDiscovery"> Announce on the local network</label>
+    <div class="muted small">Off by default. Announcing broadcasts your public key to everyone on the LAN.</div>
+    <div class="vault" id="vaultInfo"></div>
+    <div class="muted small" id="aboutLine" style="margin-top:8px"></div>
+    <div class="modal-actions"><button class="danger ghost" id="btnQuit">Quit app</button><span class="spacer"></span><button class="primary" data-close>Done</button></div>
+  </div>
+
+  <div class="modal hidden" id="mName">
+    <h3>Welcome</h3>
+    <p class="muted">What should your contacts see you as? Only they ever see it. It is sent inside the encrypted handshake.</p>
+    <input id="firstName" maxlength="64" placeholder="Your name">
+    <div class="hotkey-note" id="hotkeyNote"></div>
+    <div class="modal-actions"><span class="spacer"></span><button class="primary" id="firstGo">Start</button></div>
+  </div>
+
+  <div class="modal hidden" id="mShot">
+    <h3>Allow screen capture</h3>
+    <p class="muted" id="shotLead">macOS lets an app read the screen only after you allow it once. Nothing was sent.</p>
+    <ol class="steps">
+      <li>Open <b>System Settings → Privacy &amp; Security → Screen &amp; System Audio Recording</b></li>
+      <li>Turn on <b>P2P Chat</b>. If it is already on, switch it off and on again: macOS counts an updated build as a new app</li>
+      <li>Quit P2P Chat (Settings → Quit app), open it again, then click the button again</li>
+    </ol>
+    <div class="modal-actions"><button class="primary" id="shotSettings">Open System Settings</button><span class="spacer"></span><button class="ghost" data-close>Close</button></div>
+  </div>
+
+  <div class="modal hidden" id="mShareBack">
+    <h3>Share your screen too?</h3>
+    <p class="muted"><b id="shareBackName"></b> is sharing their screen and asks to see yours as well (two-way share). You keep watching theirs either way.</p>
+    <div class="modal-actions"><button class="ghost" id="shareBackNo">Just watch</button><span class="spacer"></span><button class="primary" id="shareBackYes">Share my screen</button></div>
+  </div>
+
+  <div class="lightbox hidden" id="lightbox">
+    <img id="lbImg" alt="Screenshot" draggable="false">
+    <div class="lb-tools"><span class="lb-meta" id="lbMeta"></span><button id="lbCopy">Copy</button><button id="lbSave">Save…</button><button class="ghost" data-lb-close>Close</button></div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+</div>
+<script src="highlight.js"></script>
+<script src="app.js"></script>
+<script src="share.js"></script>
+</body>
+</html>

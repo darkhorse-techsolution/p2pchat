@@ -1,0 +1,90 @@
+/* Theme layer. Two complete palettes, selected by <html data-theme="dark|light">.
+   app.js resolves the Settings choice (system / dark / light) to one of the two and
+   follows OS changes while "system" is selected. Components use these tokens only.
+
+   Contrast targets (WCAG 2.1): body text >= 7:1, secondary text >= 4.5:1, faint text
+   (timestamps, hints) >= 4.5:1 on its own surface, accent-as-text >= 4.5:1,
+   borders >= 1.5:1 against their surface. test/theme-contrast.js checks them. */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* surfaces */
+  --bg: #0f1115;            /* window */
+  --side: #13161c;          /* sidebar */
+  --panel: #181c24;         /* cards, header, composer */
+  --panel-2: #1f2430;       /* raised: buttons, active row, code header */
+  --code-bg: #0b0d12;
+  --peer: #232937;          /* incoming bubble */
+  --backdrop: rgba(4, 6, 10, 0.6);
+  --viewer-bg: #000000;      /* behind the shared video */
+  /* lines */
+  --line: #2b313d;
+  --line-2: #343b49;
+  /* text */
+  --text: #e8eaf0;
+  --dim: #9aa3b6;
+  --faint: #7b8497;
+  --on-accent: #ffffff;
+  /* brand + states */
+  --accent: #2b6aff;
+  --accent-2: #5487ff;
+  --accent-text: #8fb0ff;   /* accent used as text on dark surfaces */
+  --accent-soft: rgba(91, 140, 255, 0.18);
+  --me: linear-gradient(135deg, #2b6aff, #6f6cff);
+  --good: #3fcf8e;
+  --warn: #ffb545;
+  --bad: #ff7373;
+  /* controls */
+  --focus-ring: rgba(91, 140, 255, 0.35);
+  --selection: rgba(91, 140, 255, 0.35);
+  --scrollbar: #3a4152;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.35);
+  --kbd-bg: #1f2430;
+  --kbd-line: #3a4152;
+  /* code */
+  --tk-c: #7d8799; --tk-s: #9ad6a3; --tk-n: #f0b26b; --tk-k: #c792ea;
+  --tk-f: #82aaff; --tk-t: #ffcb6b; --tk-l: #f78c6c; --tk-p: #9aa3b6; --tk-o: #89ddff;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6fa;
+  --side: #eceff5;
+  --panel: #ffffff;
+  --panel-2: #eef1f7;
+  --code-bg: #f6f8fc;
+  --peer: #ffffff;
+  --backdrop: rgba(20, 28, 48, 0.45);
+  --viewer-bg: #000000;      /* behind the shared video */
+  --line: #d9dee8;
+  --line-2: #c4cbd9;
+  --text: #15181f;
+  --dim: #4f5b72;
+  --faint: #636c7f;
+  --on-accent: #ffffff;
+  --accent: #2c69ff;        /* darker than the dark palette's accent so it reads on white */
+  --accent-2: #5586ff;
+  --accent-text: #1f55d6;
+  --accent-soft: rgba(47, 107, 255, 0.12);
+  --me: linear-gradient(135deg, #2c69ff, #5b5bf0);
+  --good: #147b4c;
+  --warn: #a35d00;
+  --bad: #c8322b;
+  --focus-ring: rgba(47, 107, 255, 0.3);
+  --selection: rgba(47, 107, 255, 0.22);
+  --scrollbar: #b9c1d0;
+  --shadow: 0 12px 40px rgba(20, 30, 60, 0.18);
+  --shadow-sm: 0 1px 4px rgba(20, 30, 60, 0.18);
+  --kbd-bg: #eef1f7;
+  --kbd-line: #c4cbd9;
+  --tk-c: #6a7282; --tk-s: #1f6f3f; --tk-n: #a04c00; --tk-k: #6d28d9;
+  --tk-f: #1d4ed8; --tk-t: #8a5a00; --tk-l: #b03a1b; --tk-p: #4f5b72; --tk-o: #0e6f86;
+}
+
+/* Before app.js runs there is no data-theme yet; follow the OS so nothing flashes. */
+:root:not([data-theme]) { color-scheme: light dark; }
+@media (prefers-color-scheme: dark)  { :root:not([data-theme]) { --bg: #0f1115; --text: #e8eaf0; } }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) { --bg: #f4f6fa; --text: #15181f; } }
+
+::selection { background: var(--selection); }
