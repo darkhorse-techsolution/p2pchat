@@ -39,7 +39,7 @@
     const sess = { pub, id: id || newSid(), pc, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null,
       remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
-      ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, flush: null, sent: 0, recv: 0 } };
+      ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, flush: null, sent: 0, recv: 0, cursor: null } };
     pc.onnegotiationneeded = async () => {
       try { sess.makingOffer = true; await pc.setLocalDescription(); send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
       catch (e) { console.error('negotiation', e); }
@@ -247,6 +247,10 @@
     sess.ctl.recv++;
     const name = nameOf(sess.pub);
     switch (m.t) {
+      case 'cur':   // the shape of their pointer: drawn as my own while I control
+        sess.ctl.cursor = cursorCss(m);
+        if (sess.ctl.take) $('viewerVideo').style.cursor = sess.ctl.cursor;
+        return;
       case 'req':   // they want my mouse and keyboard
         if (!sess.screenTrack) { sendCtl(sess, { t: 'ctl', on: false, why: 'notsharing' }); return; }
         if (sess.ctl.give === 'on') { sendCtl(sess, { t: 'ctl', on: true }); return; }
@@ -276,6 +280,18 @@
     }
   }
   // sharer: the dialog's Allow
+  // The shared picture carries no pointer, so a Mac sharer's helper reports the system cursor image
+  // whenever it changes (main/input.js onCursor); it rides the reliable channel and becomes the
+  // viewer's own pointer over the video. Other sharers leave the viewer a plain arrow.
+  function cursorCss(m) {
+    const n = (v, max) => (Number.isInteger(v) && v >= 0 && v <= max ? v : null);
+    const w = n(m.w, 128), h = n(m.h, 128), pw = n(m.pw, 512), ph = n(m.ph, 512), hx = n(m.hx, 128), hy = n(m.hy, 128);
+    if (!w || !h || pw === null || ph === null || hx === null || hy === null) return '';
+    if (typeof m.png !== 'string' || m.png.length > 300000 || !/^[A-Za-z0-9+/]+=*$/.test(m.png)) return '';
+    const url = `url("data:image/png;base64,${m.png}")`, k = Math.max(1, Math.round(pw / w));
+    return `${k > 1 ? `-webkit-image-set(${url} ${k}x)` : url} ${Math.min(hx, w - 1)} ${Math.min(hy, h - 1)}, default`;
+  }
+  function onCursor(c) { if (s && s.ctl.give === 'on' && c && typeof c === 'object') sendCtl(s, { t: 'cur', w: c.w, h: c.h, pw: c.pw, ph: c.ph, hx: c.hx, hy: c.hy, png: c.png }); }
   async function giveControl(sess) {
     if (sess !== s || !sess.screenTrack) { sess.ctl.give = 'off'; sendCtl(sess, { t: 'ctl', on: false, why: 'notsharing' }); render(); return; }
     let r; try { r = await window.api.controlGrant(); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
@@ -317,12 +333,12 @@
     sess.ctl.take = true; sess.ctl.move = null;
     clearInterval(sess.ctl.flush);
     sess.ctl.flush = setInterval(() => { const m = sess.ctl.move; if (m) { sess.ctl.move = null; sendCtl(sess, m, true); } }, MOVE_MS);
-    const v = $('viewerVideo'); v.classList.add('ctl'); v.focus();
+    const v = $('viewerVideo'); v.classList.add('ctl'); v.style.cursor = sess.ctl.cursor || ''; v.focus();
   }
   function stopTaking(sess) {
     clearInterval(sess.ctl.flush); sess.ctl.flush = null; sess.ctl.move = null;
     if (sess.ctl.take) { sess.ctl.take = false; sendCtl(sess, { t: 'r' }); }
-    $('viewerVideo').classList.remove('ctl');
+    const v = $('viewerVideo'); v.classList.remove('ctl'); v.style.cursor = ''; sess.ctl.cursor = null;
   }
   const taking = () => !!(s && s.ctl.take && s.remote.screen);
   // where on their display the pointer is: fractions of the video picture (object-fit: contain leaves bars)
@@ -481,6 +497,6 @@
     });
     return out;
   }
-  window.Share = { onFrame, onStatus, onSettings, onFullscreen, onControl, render, end, setFull, sessionPub, active: () => !!s, lastRecording: () => lastRecording, debug, audio,
+  window.Share = { onFrame, onStatus, onSettings, onFullscreen, onControl, onCursor, render, end, setFull, sessionPub, active: () => !!s, lastRecording: () => lastRecording, debug, audio,
     inject: (m) => (taking() ? sendCtl(s, m, m && m.t === 'm') : false) };   // test hook: send one control message as the viewer's input would
 })();

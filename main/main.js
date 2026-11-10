@@ -41,10 +41,12 @@ process.on('uncaughtException', (e) => {
 process.on('unhandledRejection', (e) => { log.error('unhandledRejection', e); });
 
 // Super = the Windows key on Windows/Linux, Command on macOS. Ctrl+Win+X / Ctrl+Cmd+X.
-const DEFAULT_HOTKEY = 'Control+Super+X';
-const DEFAULT_MODE_HOTKEY = 'Control+Super+Backspace';   // cycles Overlap -> On top -> Overlay; the only way out of Overlay
-const DEFAULT_FULL_HOTKEY = 'Control+Super+Return';      // full screen for an incoming share, also while controlling it
-const OLD_DEFAULTS = { hotkey: 'Super+Alt+X', modeHotkey: 'Super+Alt+Z' };   // 0.6 and earlier; stored copies move to the new keys at boot
+const MAC = process.platform === 'darwin';
+const DEFAULT_HOTKEY = MAC ? 'Command+Alt+V' : 'Control+Super+X';
+const DEFAULT_MODE_HOTKEY = MAC ? 'Command+Alt+Backspace' : 'Control+Super+Backspace';   // cycles Overlap -> On top -> Overlay; the only way out of Overlay
+const DEFAULT_FULL_HOTKEY = MAC ? 'Command+Alt+Return' : 'Control+Super+Return';      // full screen for an incoming share, also while controlling it
+// Every default ever shipped, per key: a stored copy of one of them moves to the current default at boot
+const FORMER_DEFAULTS = { hotkey: ['Super+Alt+X', 'Control+Super+X', 'Command+Alt+V'], modeHotkey: ['Super+Alt+Z', 'Control+Super+Backspace', 'Command+Alt+Backspace'], fullHotkey: ['Control+Super+Return', 'Command+Alt+Return'] };
 const MODES = ['overlap', 'top', 'overlay'];
 // Your own relay. New installs use it until the user changes it in Settings; invites carry it.
 const DEFAULT_RELAY = 'relay://49.12.170.6:4433/eEo_7e-gv8vacjh-EGO7ZcwYNSrALyQU1kDFruoFlyU';
@@ -457,6 +459,7 @@ handle('fullscreen', (_e, on) => setViewerFullscreen(on));
 const helpersDir = path.join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'main', 'helpers');
 const control = createController({ log, helpersDir, screen, systemPreferences });
 control.onExit = (why) => push('control', { on: false, why });
+control.onCursor = (c) => push('cursor', c);   // the sharer's renderer passes it to the viewer
 handle('controlGrant', () => {
   if (!sharedDisplay) return { ok: false, reason: 'notsharing', message: 'Nothing is being shared' };
   const d = screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) || sharedDisplay;
@@ -681,7 +684,8 @@ async function boot() {
     if (isWin) tray.on('click', toggleWindow);
   }
 
-  for (const k of Object.keys(OLD_DEFAULTS)) if (settings()[k] === OLD_DEFAULTS[k]) { settings()[k] = k === 'hotkey' ? DEFAULT_HOTKEY : DEFAULT_MODE_HOTKEY; store.saveSoon(); log.info(k, 'moved from the old default to', settings()[k]); }
+  const CURRENT = { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY };
+  for (const k of Object.keys(CURRENT)) if (settings()[k] !== CURRENT[k] && FORMER_DEFAULTS[k].includes(settings()[k])) { settings()[k] = CURRENT[k]; store.saveSoon(); log.info(k, 'moved from a former default to', CURRENT[k]); }
   if (!settings().fullHotkey) settings().fullHotkey = DEFAULT_FULL_HOTKEY;
   let r = registerHotkey(settings().hotkey || DEFAULT_HOTKEY);
   if (!r.ok && settings().hotkey !== DEFAULT_HOTKEY) r = registerHotkey(DEFAULT_HOTKEY); // a custom key that stopped working falls back

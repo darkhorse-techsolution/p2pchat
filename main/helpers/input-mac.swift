@@ -8,11 +8,13 @@
 //   w DX DY X Y      wheel, DX/DY in pixels (positive = content scrolls right / down)
 //   k CODE 1|0       key down / up, CODE = CGKeyCode (kVK_*)
 //   r                release everything held
-// "ready" and errors go to stderr. Everything held is released at "r" and at end of input.
+// "ready" and errors go to stderr, the cursor shape to stdout (see pollCursor). Everything held
+// is released at "r" and at end of input.
 // Needs Accessibility access (the app asks for it before starting this helper).
 import Foundation
 import CoreGraphics
 import ApplicationServices
+import AppKit
 
 let src = CGEventSource(stateID: .hidSystemState)
 var flags = CGEventFlags()
@@ -80,10 +82,31 @@ func reset() {
     heldMods.removeAll()
 }
 
-say("ready trusted=\(AXIsProcessTrusted() ? 1 : 0)")
-while let line = readLine() {
+// Cursor shape: while the helper runs, the system cursor (whichever app set it) is read ten
+// times a second and written to stdout when it changes, so the viewer can draw the real
+// pointer where it points: "cursor W H PW PH HX HY PNG" (W H and the hot spot in points,
+// PW PH in pixels, PNG base64).
+var lastCursor: Data? = nil
+func pollCursor() {
+    guard let c = NSCursor.currentSystem, let tiff = c.image.tiffRepresentation else { return }
+    if tiff == lastCursor { return }
+    lastCursor = tiff
+    // drawn at 2x of its point size: the native bitmap can be far larger (a 28x40 pt cursor came as 280x400 px)
+    let sz = c.image.size, hs = c.hotSpot, pw = Int(sz.width) * 2, ph = Int(sz.height) * 2
+    guard pw > 0, ph > 0, pw <= 256, ph <= 256,
+          let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pw, pixelsHigh: ph, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    c.image.draw(in: NSRect(x: 0, y: 0, width: pw, height: ph), from: .zero, operation: .copy, fraction: 1)
+    NSGraphicsContext.restoreGraphicsState()
+    guard let png = rep.representation(using: .png, properties: [:]) else { return }
+    let line = "cursor \(Int(sz.width)) \(Int(sz.height)) \(rep.pixelsWide) \(rep.pixelsHigh) \(Int(hs.x)) \(Int(hs.y)) \(png.base64EncodedString())\n"
+    FileHandle.standardOutput.write(line.data(using: .utf8)!)
+}
+
+func handle(_ line: String) {
     let p = line.split(separator: " ").map(String.init)
-    guard let cmd = p.first else { continue }
+    guard let cmd = p.first else { return }
     func num(_ i: Int) -> Double { i < p.count ? (Double(p[i]) ?? 0) : 0 }
     switch cmd {
     case "m": move(CGPoint(x: num(1), y: num(2)))
@@ -94,4 +117,15 @@ while let line = readLine() {
     default: say("err unknown command \(cmd)")
     }
 }
-reset()
+
+say("ready trusted=\(AXIsProcessTrusted() ? 1 : 0)")
+// Commands run on the main thread, which also owns the cursor timer; the reader thread hands
+// them over one at a time and ends the process at end of input.
+let reader = Thread {
+    while let line = readLine() { DispatchQueue.main.sync { handle(line) } }
+    DispatchQueue.main.sync { reset(); exit(0) }
+}
+reader.start()
+let timer = Timer(timeInterval: 0.1, repeats: true) { _ in pollCursor() }
+RunLoop.main.add(timer, forMode: .common)
+RunLoop.main.run()

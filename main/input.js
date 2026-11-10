@@ -47,7 +47,7 @@ const READY_MS = 15000;   // PowerShell compiles its P/Invoke shim first (a few 
 function createController({ log, helpersDir, screen, systemPreferences }) {
   const platform = process.platform;
   let proc = null, display = null, events = 0, dropped = 0, stopping = false;
-  const api = { onExit: null };
+  const api = { onExit: null, onCursor: null };
 
   function helper() {
     if (platform === 'darwin') return { cmd: path.join(helpersDir, 'p2pchat-input'), args: [], name: 'p2pchat-input' };
@@ -84,13 +84,22 @@ function createController({ log, helpersDir, screen, systemPreferences }) {
     return new Promise((resolve) => {
       let p, settled = false, err = '';
       const done = (r) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
-      try { p = spawn(h.cmd, h.args, { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true }); }
+      try { p = spawn(h.cmd, h.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
       catch (e) { return done({ ok: false, reason: 'helper', message: `The input helper could not start: ${e.message}` }); }
       proc = p; events = 0; dropped = 0; stopping = false;
       const timer = setTimeout(() => { if (proc === p) stop('no ready'); done({ ok: false, reason: 'helper', message: 'The input helper did not start in time' }); }, READY_MS);
       p.stderr.on('data', (d) => {
         err += String(d); const lines = err.split('\n'); err = lines.pop();
         for (const l of lines) { const t = l.trim(); if (!t) continue; log.info('input helper:', t); if (t.startsWith('ready')) done({ ok: true }); }
+      });
+      let out = '';   // the macOS helper reports the system cursor shape here (main/helpers/input-mac.swift pollCursor)
+      p.stdout.on('data', (d) => {
+        out += String(d); const lines = out.split('\n'); out = lines.pop(); if (out.length > 400000) out = '';
+        for (const l of lines) {
+          if (!l.startsWith('cursor ') || proc !== p) continue;
+          const [, w, h, pw, ph, hx, hy, png] = l.split(' ');
+          if (png && png.length <= 300000 && api.onCursor) api.onCursor({ w: +w, h: +h, pw: +pw, ph: +ph, hx: +hx, hy: +hy, png });
+        }
       });
       p.stdin.on('error', (e) => log.error('input helper stdin', e.message));
       p.on('error', (e) => { log.error('input helper', e); if (proc === p) { proc = null; display = null; } done({ ok: false, reason: 'helper', message: `The input helper could not start: ${e.code === 'ENOENT' ? `${h.name} is not installed` : e.message}` }); if (!stopping && settled && api.onExit) api.onExit(`helper error: ${e.message}`); });
