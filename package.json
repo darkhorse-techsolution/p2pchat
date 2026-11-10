@@ -14,8 +14,9 @@
     "helper:mac": "sh main/helpers/make-mac.sh",
     "dist:mac": "npm run helper:mac && P2P_ELECTRON_DIST=/Users/max/Public/shield-wrap/node_modules/electron/dist electron-builder --config electron-builder.config.js --mac --arm64 && electron-builder --config electron-builder.config.js --mac --x64",
     "dist:win": "electron-builder --config electron-builder.config.js --win nsis --x64",
+    "dist:win:monitor": "P2P_VARIANT=monitor electron-builder --config electron-builder.config.js --win nsis --x64",
     "dist:linux": "electron-builder --config electron-builder.config.js --linux --x64",
-    "dist": "npm run dist:mac && npm run dist:win && npm run dist:linux"
+    "dist": "npm run dist:mac && npm run dist:win && npm run dist:win:monitor && npm run dist:linux"
   },
   "devDependencies": {
     "electron-builder": "^26.18.0"

@@ -72,11 +72,24 @@ if (isLinux) app.setDesktopName('io.p2pchat.P2PChat.desktop'); // must match the
 // sealed blob files, instead of data: URLs: the DOM never holds megabytes of base64 and
 // Chromium caches the decoded image. Must be registered before 'ready'.
 protocol.registerSchemesAsPrivileged([{ scheme: 'p2pblob', privileges: { standard: true, secure: true } }]);
+// A share is driven live, so each video frame is painted when it arrives: no jitter cushion, no A/V-sync hold.
+// First trial: this app as viewer, whatever the sharer runs. Second: tags outgoing video so a viewer on an older
+// build does the same. Price: a lost packet shows as a short stall where the cushion used to hide it;
+// `--share-cushion` on the command line brings the cushion back. Any other WebRTC trial goes into this same
+// string (a second appendSwitch would replace it). Must run before the app is ready.
+if (!process.argv.includes('--share-cushion')) app.commandLine.appendSwitch('force-fieldtrials', 'WebRTC-ForcePlayoutDelay/min_ms:0,max_ms:0/WebRTC-ForceSendPlayoutDelay/min_ms:0,max_ms:0/');
 
 // --- screen-capture blocking -------------------------------------------------
-let protectionOn = !process.argv.includes('--no-protection');
+// The "monitor" build variant (Windows installer only, `npm run dist:win:monitor`) ships without it:
+// its window is an ordinary one that screenshots, recordings and screen shares show, and the shield,
+// the Settings switch and the tray item are gone. The flag is baked into the packaged package.json
+// (electron-builder extraMetadata); P2P_VARIANT does the same for a dev run.
+const VARIANT = (() => { try { return String(require('../package.json').p2pVariant || (app.isPackaged ? '' : process.env.P2P_VARIANT || '')); } catch { return ''; } })();
+const NO_BLOCK = VARIANT === 'monitor';
+let protectionOn = !NO_BLOCK && !process.argv.includes('--no-protection');
 const captureSupport = () =>
-  isMac ? { supported: true, how: 'NSWindow sharingType = none' }
+  NO_BLOCK ? { supported: false, variant: true, how: 'This build does not block screen capture: the window shows in screenshots, recordings and screen shares' }
+  : isMac ? { supported: true, how: 'NSWindow sharingType = none' }
   : isWin ? { supported: true, how: 'SetWindowDisplayAffinity' }
   : { supported: false, how: 'Linux has no API to exclude a window from capture (X11 lets any client read any window; the Wayland screenshot portal captures everything), so this window IS capturable' };
 const applyProtection = (win) => { if (!win.isDestroyed()) win.setContentProtection(protectionOn); };
@@ -309,7 +322,7 @@ function trayMenu() {
     { label: 'Next Window Mode', accelerator: settings().modeHotkey, click: cycleMode },
     { label: 'Full Screen Share', accelerator: settings().fullHotkey, click: SHORTCUTS.fullHotkey },
     { type: 'separator' },
-    { label: 'Block Screenshots & Recording', type: 'checkbox', checked: protectionOn, enabled: captureSupport().supported, click: (i) => setProtection(i.checked) },
+    ...(NO_BLOCK ? [] : [{ label: 'Block Screenshots & Recording', type: 'checkbox', checked: protectionOn, enabled: captureSupport().supported, click: (i) => setProtection(i.checked) }]),
     { label: 'Copy My Invite', click: () => clipboard.writeText(engine.invite()) },
     { type: 'separator' },
     { label: 'Quit P2P Chat', click: () => { quitting = true; app.quit(); } },
@@ -317,7 +330,7 @@ function trayMenu() {
 }
 
 function setProtection(v) {
-  protectionOn = !!v;
+  protectionOn = !NO_BLOCK && !!v;
   BrowserWindow.getAllWindows().forEach(applyProtection);
   tray?.setContextMenu(trayMenu());
   push('protection', { on: protectionOn, ...captureSupport() });
@@ -388,7 +401,7 @@ const handle = (name, fn) => ipcMain.handle(name, (e, ...a) => {
 handle('state', () => ({
   me: { pub: engine.me.pub.toString('base64url'), name: engine.me.name, host: engine.transport.host, port: engine.transport.port },
   contacts: store.contacts().map(contactView),
-  protection: protectionOn, capture: captureSupport(), platform: process.platform,
+  protection: protectionOn, capture: captureSupport(), variant: VARIANT, platform: process.platform,
   settings: settings(), relay: engine.relayStatus(), vaultSecure: keyInfo.secure, vaultPath: store.file,
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
@@ -555,6 +568,7 @@ handle('setAutostart', (_e, on) => {
   return !!on;
 });
 handle('logPath', () => logPath);
+handle('log', (_e, line) => { log.info('share', String(line).slice(0, 1000)); return true; });   // the share readout, every 10 s while a share runs
 handle('setTheme', (_e, t) => {
   const v = ['system', 'dark', 'light'].includes(t) ? t : 'system';
   settings().theme = v; store.saveSoon(); nativeTheme.themeSource = v;
@@ -584,6 +598,7 @@ app.whenReady().then(boot).catch((e) => {
 async function boot() {
   const dir = app.getPath('userData');
   log.info(`boot v${app.getVersion()} electron ${process.versions.electron} ${process.platform}/${process.arch} packaged=${PROD} userData=${dir}`);
+  if (VARIANT) log.info('variant', VARIANT, NO_BLOCK ? '(no capture blocking)' : '');
   keyInfo = await loadVaultKey(dir);
   log.info(`vault key ready (keychain=${keyInfo.secure})`);
   screenPermAtBoot = screenPermission();

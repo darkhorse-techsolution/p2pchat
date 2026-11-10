@@ -314,6 +314,7 @@ function renderSettings() {
   const hk = document.querySelector('#setHotkey').parentElement.nextElementSibling; if (hk) hk.textContent = S.backgroundApp ? (window.api.platform === 'darwin' ? 'No Dock icon and no menu-bar icon: this hotkey is the only way to bring the window back (or open the app again from Launchpad). Closing the window hides it.' : 'No taskbar button: this hotkey and the tray icon bring the window back.') : 'On Linux the window stays in the taskbar and the hotkey works on X11 sessions only.'; $('setRelay').value = S.settings.relay || ''; renderRelay(S.relay || 'off');
   applyTheme(S.settings.theme || 'system');
   $('setProtection').checked = S.protection; $('setProtection').disabled = !S.capture.supported; $('setProtectionHow').textContent = S.capture.how;
+  $('setProtection').closest('label').classList.toggle('hidden', !!S.capture.variant); $('setProtectionHow').classList.toggle('hidden', !!S.capture.variant);   // the monitor build has no capture blocking to switch
   $('setDiscovery').checked = !!S.settings.discovery;
   $('autostartRow').classList.toggle('hidden', !S.autostartSupported); $('setAutostart').checked = !!S.settings.autostart;
   $('setPopups').checked = S.settings.popups !== false; $('setPopupText').checked = S.settings.popupText !== false;
@@ -395,6 +396,7 @@ $('setRelay').onchange = async (e) => {
 };
 function renderShield(on) {
   S.protection = on; const b = $('shield');
+  b.classList.toggle('hidden', !!(S.capture && S.capture.variant)); if (S.capture && S.capture.variant) return;   // the monitor build: no shield at all
   if (S.capture && !S.capture.supported) { b.className = 'shield off'; b.disabled = true; $('shieldText').textContent = window.api.platform === 'linux' ? 'No capture blocking on Linux (no OS API)' : 'Capture blocking unavailable here'; b.title = S.capture.how; return; }
   b.className = 'shield ' + (on ? 'on' : 'off'); $('shieldText').textContent = on ? 'Screenshots blocked' : 'Screenshots ALLOWED'; b.title = on ? S.capture.how : 'Click to block screen capture';
 }

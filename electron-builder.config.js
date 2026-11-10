@@ -3,6 +3,9 @@
 // is no Apple Developer ID or Windows certificate, so builds are unsigned and
 // users get the usual first-launch warnings (documented in README).
 const path = require('node:path');
+// P2P_VARIANT=monitor builds the Windows installer without capture blocking (npm run dist:win:monitor):
+// same app, the flag lands in the packaged package.json and main/main.js reads it.
+const VARIANT = process.env.P2P_VARIANT || '';
 
 module.exports = {
   appId: 'io.p2pchat.desktop',
@@ -26,7 +29,8 @@ module.exports = {
     grantFileProtocolExtraPrivileges: true,
     resetAdHocDarwinSignature: true,
   },
-  directories: { buildResources: 'build', output: 'dist' },
+  directories: { buildResources: 'build', output: VARIANT ? `dist/${VARIANT}` : 'dist' },
+  ...(VARIANT ? { extraMetadata: { p2pVariant: VARIANT } } : {}),
   files: ['main/**', 'core/**', 'ui/**', 'package.json', '!**/*.md', '!**/*.swift', '!main/helpers/make-mac.sh', '!test/**', '!relay/**', '!build/**', '!dist/**'],
   asarUnpack: ['main/helpers/**'],   // the remote-control helpers are run as separate processes, so they must exist as real files
   publish: null,
@@ -69,6 +73,7 @@ module.exports = {
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     deleteAppDataOnUninstall: false,
+    ...(VARIANT === 'monitor' ? { artifactName: 'P2P Chat Monitor Setup ${version}.${ext}' } : {}),
     include: 'build/installer.nsh',   // removes the autostart Run key on uninstall
   },
 
