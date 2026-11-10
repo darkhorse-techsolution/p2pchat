@@ -254,6 +254,7 @@ async function boot(who, opts = {}) {
   ok('S1 nothing of it was stored', !bob.store.conv(A).messages.some((m) => m.kind === 'share' || /candidate:/.test(m.text)) && !JSON.stringify(bob.store.data).includes('candidate:1'));
   let shareErr = ''; try { alice.sendShare(B, { op: 'nope', sid: 'abc' }); } catch (e) { shareErr = e.message; }
   ok('S1 unknown op refused locally; oversized sdp and bad candidate dropped', /bad share/.test(shareErr) && sanitizeShare({ op: 'sdp', sid: 'x', description: { type: 'offer', sdp: 'x'.repeat(100001) } }) === null && sanitizeShare({ op: 'ice', sid: 'x', candidate: 'str' }) === null && sanitizeShare({ op: 'bye', sid: 'x'.repeat(33) }) === null);
+  ok('S1 the protocol version v is kept when it is an integer from 1 to 99 and left out otherwise', sanitizeShare({ op: 'state', sid: 'x', screen: true, v: 2 }).v === 2 && [0, 100, '2'].every((v) => { const f = sanitizeShare({ op: 'state', sid: 'x', screen: true, v }); return f !== null && !('v' in f); }));
   const pbS = bob.peers.get(A); const beforeJunk = gotShare.length;
   pbS.conn.send(kc.seal(pbS.session, { k: 'share', op: 'sdp', sid: 'zzz', description: { type: 'offer' } }));
   await sleep(300);

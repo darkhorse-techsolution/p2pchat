@@ -19,26 +19,47 @@
 // sharer's app hands them to the main process, which posts them to the OS (main/input.js).
 // Only a whole display is ever shared, so coordinates are fractions of that display.
 //
-// Reads from app.js: S, $, toast, contact, ipcErr, renderContacts, show. Reads K.nameOf (share/kit.js)
-// and K.tune (share/tune.js: every latency and quality value). Exposes window.Share.
+// Reads from app.js: S, $, toast, contact, ipcErr, renderContacts, show. Reads K.nameOf and the limits
+// (share/kit.js) and K.tune (share/tune.js: every latency and quality value). Exposes window.Share and
+// K.sessions, the registry of running sessions.
 (() => {
   const K = window.ShareKit;
-  let s = null;                       // the active session, or null
   const newSid = () => Math.random().toString(36).slice(2, 12);
 
-  const ice = () => window.api.iceConfig(); // read per session, so a Settings change applies to the next share
-  const send = (sess, f) => window.api.share(sess.pub, { sid: sess.id, ...f }).catch((e) => { toast(ipcErr(e), 'err'); if (/offline/.test(ipcErr(e))) close(sess, 'offline'); });
+  // --- sessions ---------------------------------------------------------------------
+  // One session per contact, keyed by the contact's public key: that is all a released peer's bye
+  // names, and two peers that start at the same moment keep a sid each.
+  const map = new Map();
+  const cur = () => map.get(S.current) || null;                                             // the session of the open chat
+  const pick = (pub) => map.get(pub) || cur() || map.values().next().value || null;         // ... else the oldest
+  const giving = (state) => [...map.values()].find((x) => x.ctl.give === state) || null;    // the session that asked for ('asked') or has ('on') control of my screen
 
-  async function create(pub, id) {
-    const cfg = await ice();
-    const pc = new RTCPeerConnection({ iceServers: cfg.iceServers, iceTransportPolicy: cfg.iceTransportPolicy, bundlePolicy: 'max-bundle' });
-    const sess = { pub, id: id || newSid(), pc, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
+  // Synchronous: the slot is taken in the task that decides to open it, so two frames, or a frame and
+  // a click, never open two sessions with one contact. The peer connection needs the ICE servers from
+  // main and follows behind `ready`; frames that arrive before it wait in the inbox.
+  function open(pub, sid, inbound) {
+    const had = map.get(pub);
+    if (had) return had;
+    if (map.size >= K.MAX_SESSIONS) return null;
+    let markSeen;
+    const sess = { pub, id: sid || newSid(), pc: null, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null,
-      remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(), closed: false,
+      remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
+      closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null,
       ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null } };
+    map.set(pub, sess);
+    // the ICE config is read per session, so a Settings change applies to the next share
+    sess.ready = window.api.iceConfig().then((cfg) => { if (!sess.closed) build(sess, cfg); }).catch((e) => { console.error('share session', e); close(sess, 'failed'); });
+    if (inbound) armConnect(sess);
+    return sess;
+  }
+
+  function build(sess, cfg) {
+    const pc = sess.pc = new RTCPeerConnection({ iceServers: cfg.iceServers, iceTransportPolicy: cfg.iceTransportPolicy, bundlePolicy: 'max-bundle' });
     pc.onnegotiationneeded = async () => {
-      try { sess.makingOffer = true; await pc.setLocalDescription(); send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
-      catch (e) { console.error('negotiation', e); }
+      if (sess.closed) return;
+      try { sess.makingOffer = true; await pc.setLocalDescription(); if (sess.closed) return; send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); armConnect(sess); }
+      catch (e) { if (!sess.closed) console.error('negotiation', e); }
       finally { sess.makingOffer = false; }
     };
     pc.onicecandidate = ({ candidate }) => send(sess, { op: 'ice', candidate: candidate ? candidate.toJSON() : null });
@@ -51,12 +72,33 @@
     };
     pc.ondatachannel = (e) => adoptChannel(sess, e.channel);
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') { toast('Screen share connection failed. Check the call server in Settings.', 'err'); close(sess, 'failed'); }
+      if (pc.connectionState === 'connected') { sess.everConnected = true; clearTimeout(sess.connectTimer); sess.connectTimer = null; }
+      if (pc.connectionState === 'failed') { toast(`Screen share with ${K.nameOf(sess.pub)} failed. Check the call server in Settings.`, 'err'); close(sess, 'failed'); }
       else render();
     };
     sess.statsTimer = setInterval(() => pollStats(sess), 2000);
-    s = sess;
-    return sess;
+  }
+
+  // Signaling never retries and a connection reports failure only once it has started, so a lost offer
+  // would sit at "Connecting" for good. Armed by the first offer or the first frame, not by open():
+  // the capture can take any time to start before there is an offer to send.
+  function armConnect(sess) {
+    if (sess.closed || sess.everConnected || sess.connectTimer) return;
+    sess.connectTimer = setTimeout(() => {
+      sess.connectTimer = null;
+      if (sess.closed || sess.everConnected) return;
+      toast(`Screen share with ${K.nameOf(sess.pub)} did not connect`, 'err');
+      send(sess, { op: 'bye' }); close(sess, 'timeout');
+    }, K.CONNECT_MS);
+  }
+
+  // Every frame says which share protocol this build speaks (v). A peer whose frames carry none is 0.7.1 or older.
+  function send(sess, f) {
+    if (sess.closed) return;
+    window.api.share(sess.pub, { sid: sess.id, v: K.PROTO, ...f }).catch((e) => {
+      if (sess.closed) return;
+      toast(ipcErr(e), 'err'); if (/offline/.test(ipcErr(e))) close(sess, 'offline');
+    });
   }
 
   function attachRemote(sess) {
@@ -68,6 +110,7 @@
     if (!sess.pc || sess.pc.connectionState === 'closed') return;
     try {
       const st = await sess.pc.getStats();
+      if (sess.closed) return;
       let inB = 0, outB = 0, fps = 0, w = 0, h = 0, path = '', rtt = -1, codec = '';
       const codecOf = (r) => { const c = r.codecId && st.get(r.codecId); return c && c.mimeType ? c.mimeType.replace(/^video\//i, '') : ''; };
       st.forEach((r) => {
@@ -96,10 +139,13 @@
     const c = contact(pub);
     if (!c) return;
     if (c.status !== 'online') { toast(`${c.name} is offline: a screen share needs them connected`, 'err'); return; }
-    if (s && s.pub !== pub) { toast(`End the share with ${contact(s.pub)?.name || 'the other contact'} first`, 'err'); return; }
+    const busy = () => { const o = [...map.values()].find((x) => x.pub !== pub); if (o) toast(`End the share with ${contact(o.pub)?.name || 'the other contact'} first`, 'err'); return !!o; };
+    if (busy()) return;
     const perm = await window.api.screenPermission();   // macOS: ask before trying, with instructions instead of a capture error
     if (perm !== 'ok') { window.showScreenPermission(perm); return; }
-    const sess = s || await create(pub);
+    if (busy()) return;                                     // someone else's share arrived while macOS was asked
+    const sess = open(pub, null, false);                    // the session with this contact if there is one; never null right after busy()
+    await sess.ready;
     if (sess.closed) return;
     sess.mode = mode || sess.mode;
     if (sess.screenTrack) return;
@@ -153,69 +199,97 @@
 
   async function toggleMic(sess) {
     if (sess.micTrack) { sess.micTrack.enabled = !sess.micTrack.enabled; }
-    else await addMic(sess, false);
+    else { await sess.ready; if (!sess.closed) await addMic(sess, false); }
     if (sess.closed) return;
     sendState(sess); render();
   }
 
   const sendState = (sess) => send(sess, { op: 'state', screen: !!sess.screenTrack, mic: !!(sess.micTrack && sess.micTrack.enabled), mode: sess.mode, rec: !!sess.rec });
 
+  // The one way a session ends, whoever ends it. It sends nothing: End, the limit reply and the connect
+  // watchdog say bye themselves before they call it.
   function close(sess, why) {
     if (sess.closed) return;
     sess.closed = true;                 // first: everything that was waiting on this session checks it and stops
-    if (s === sess) s = null;
-    clearInterval(sess.statsTimer);
+    if (map.get(sess.pub) === sess) map.delete(sess.pub);
+    clearInterval(sess.statsTimer); clearTimeout(sess.connectTimer);
+    sess.markSeen();
+    // control, both roles
     if (sess.ctl.give === 'on') window.api.controlRevoke().catch(() => {});
     clearTimeout(sess.ctl.flush); clearTimeout(sess.ctl.askTimer);
     if (!$('mControl').classList.contains('hidden')) window.closeModal();
     $('viewerVideo').classList.remove('ctl'); $('viewerVideo').removeEventListener(K.tune.MOVE_EV, onMove);
+    if (sess.rec) stopRecording(sess);                      // before their tracks end, so the last piece is whole
     dropTrack(sess, 'screen'); dropTrack(sess, 'mic');
-    try { sess.pc.close(); } catch {}
-    if (sess.rec) stopRecording(sess);
     const v = $('viewerVideo'); v.srcObject = null;
     if (theater) setFull(false);
-    if (why === 'bye') toast(`${contact(sess.pub)?.name || 'They'} ended the screen share`);
-    if (why === 'offline') toast('Screen share ended: the contact went offline', 'err');
+    if (sess.pc) { try { sess.pc.close(); } catch {} }
+    const name = K.nameOf(sess.pub);
+    if (why === 'bye') toast(`${name} ended the screen share`);
+    if (why === 'offline') toast(`Screen share ended: ${name} went offline`, 'err');
+    if (why === 'refused') toast(`${name} cannot take the screen share right now (they are in another one)`, 'err');
     render(); renderContacts();
   }
   function end(sess) { send(sess, { op: 'bye' }); close(sess, 'ended'); }
 
   // --- their side ---------------------------------------------------------------------
-  async function onFrame(ev) {
+  // Routing is synchronous and in arrival order; the work behind it runs one frame at a time per session.
+  function onFrame(ev) {
+    let sess = map.get(ev.pub);
+    if (ev.op === 'bye') {
+      // only for this session: a late bye of an earlier one carries a sid this one has never seen
+      if (sess && (ev.sid === sess.id || sess.peerSids.has(ev.sid))) close(sess, !sess.everConnected && !(sess.pc && sess.pc.remoteDescription) ? 'refused' : 'bye');
+      return;
+    }
+    // a share starts with the offer, or with a `state` once the tracks exist; either opens the session here
+    const opens = (ev.op === 'sdp' && ev.description.type === 'offer') || (ev.op === 'state' && (ev.screen || ev.mic));
+    // A peer keeps one sid for a whole session. A sid it has not used in this one means its side is
+    // gone (restart, reload, a close that never reached us) and this is a new session or a leftover.
+    if (sess && sess.peerSids.size > 0 && ev.sid !== sess.id && !sess.peerSids.has(ev.sid)) {
+      if (!opens) return;
+      close(sess, 'replaced'); sess = null;
+    }
+    if (!sess) {
+      if (!opens) return;               // stale ice/state after a bye
+      sess = open(ev.pub, ev.sid, true);
+      if (!sess) { window.api.share(ev.pub, { sid: ev.sid, op: 'bye', v: K.PROTO }).catch(() => {}); return; }   // at the limit: busy with someone else
+    }
+    sess.peerSids.add(ev.sid);
+    if (!sess.seen) { sess.seen = true; sess.ver = Number.isInteger(ev.v) ? ev.v : 0; sess.markSeen(); }
+    sess.inbox = sess.inbox.then(() => handle(sess, ev)).catch((e) => console.error('share frame', e));
+  }
+  async function handle(sess, ev) {
+    await sess.ready;
+    if (sess.closed) return;            // a frame that waited on a session that closed is dropped
+    const pc = sess.pc;
     try {
-      if (ev.op === 'bye') { if (s && s.pub === ev.pub) close(s, 'bye'); return; }
-      let sess = s;                     // taken once: `s` can change during the awaits below
-      if (!sess) {
-        // a share starts with a `state` (sent as soon as the tracks exist) followed by the offer; either opens the session here
-        const opens = (ev.op === 'sdp' && ev.description.type === 'offer') || (ev.op === 'state' && (ev.screen || ev.mic));
-        if (!opens) return; // stale ice/state after a bye
-        sess = await create(ev.pub, ev.sid);
-      } else if (sess.pub !== ev.pub) { if (ev.op === 'sdp' || ev.op === 'state') window.api.share(ev.pub, { sid: ev.sid, op: 'bye' }).catch(() => {}); return; } // busy with someone else
       if (ev.op === 'sdp') {
-        const d = ev.description, pc = sess.pc;
+        armConnect(sess);
+        const d = ev.description;
         const readyForOffer = !sess.makingOffer && (pc.signalingState === 'stable' || sess.settingAnswer);
         const collision = d.type === 'offer' && !readyForOffer;
         sess.ignoreOffer = !sess.polite && collision;
         if (sess.ignoreOffer) return;
         sess.settingAnswer = d.type === 'answer';
-        await pc.setRemoteDescription(d);
-        sess.settingAnswer = false;
-        if (d.type === 'offer') { await pc.setLocalDescription(); send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
+        try { await pc.setRemoteDescription(d); } finally { sess.settingAnswer = false; }
+        if (sess.closed) return;
+        if (d.type === 'offer') { await pc.setLocalDescription(); if (sess.closed) return; send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
       } else if (ev.op === 'ice') {
-        try { await sess.pc.addIceCandidate(ev.candidate === null ? undefined : ev.candidate); } catch (e) { if (!sess.ignoreOffer) console.warn('ice', e.message); }
-      } else if (ev.op === 'state') {
-        const was = sess.remote.screen, wasRec = sess.remote.rec;
-        sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
-        if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
-        if (ev.screen && !was) { attachRemote(sess); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
-        if (!ev.screen && (sess.ctl.take || sess.ctl.asked)) { stopTaking(sess); clearTimeout(sess.ctl.askTimer); sess.ctl.asked = false; }
-        if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
-        if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
-        render(); renderContacts();
-      }
-    } catch (e) { console.error('share frame', e); }
+        try { await pc.addIceCandidate(ev.candidate === null ? undefined : ev.candidate); } catch (e) { if (!sess.ignoreOffer && !sess.closed) console.warn('ice', e.message); }
+      } else if (ev.op === 'state') onState(sess, ev);
+    } catch (e) { if (!sess.closed) throw e; }   // a connection that closed under the call is not an error
   }
-  function onStatus(ev) { if (s && ev.pub === s.pub && ev.status !== 'online') close(s, 'offline'); }
+  function onState(sess, ev) {
+    const was = sess.remote.screen, wasRec = sess.remote.rec;
+    sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
+    if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
+    if (ev.screen && !was) { attachRemote(sess); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
+    if (!ev.screen && (sess.ctl.take || sess.ctl.asked)) { stopTaking(sess); clearTimeout(sess.ctl.askTimer); sess.ctl.asked = false; }
+    if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
+    if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
+    render(); renderContacts();
+  }
+  function onStatus(ev) { const sess = map.get(ev.pub); if (sess && ev.status !== 'online') close(sess, 'offline'); }
 
   // --- remote control ----------------------------------------------------------------
   function adoptChannel(sess, ch) {
@@ -235,7 +309,8 @@
     if (viaMove && ch.bufferedAmount > K.tune.MOVE_BUF) return false;
     try { ch.send(JSON.stringify(msg)); sess.ctl.sent++; return true; } catch { return false; }
   }
-  K.sessions = { dc: (sess, label, msg) => sendCtl(sess, msg, label === 'move') };   // what tune.js sends pointer moves through
+  K.sessions = { map, get: (pub) => map.get(pub) || null, all: () => [...map.values()], open, close, end, send, sendState,
+    dc: (sess, label, msg) => sendCtl(sess, msg, label === 'move'), adopt: adoptChannel, openChannels, onFrame, onStatus };
   function onCtl(sess, data) {
     let m; try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
@@ -286,7 +361,7 @@
     const url = `url("data:image/png;base64,${m.png}")`, k = Math.max(1, Math.round(pw / w));
     return `${k > 1 ? `-webkit-image-set(${url} ${k}x)` : url} ${Math.min(hx, w - 1)} ${Math.min(hy, h - 1)}, default`;
   }
-  function onCursor(c) { if (s && s.ctl.give === 'on' && c && typeof c === 'object') sendCtl(s, { t: 'cur', w: c.w, h: c.h, pw: c.pw, ph: c.ph, hx: c.hx, hy: c.hy, png: c.png }); }
+  function onCursor(c) { const sess = giving('on'); if (sess && c && typeof c === 'object') sendCtl(sess, { t: 'cur', w: c.w, h: c.h, pw: c.pw, ph: c.ph, hx: c.hx, hy: c.hy, png: c.png }); }
   async function giveControl(sess) {
     if (sess.closed || !sess.screenTrack) { sess.ctl.give = 'off'; sendCtl(sess, { t: 'ctl', on: false, why: 'notsharing' }); render(); return; }
     let r; try { r = await window.api.controlGrant(); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
@@ -313,7 +388,7 @@
     if (was === 'on') toast(why === 'released' ? `${K.nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' ? 'Remote control stopped' : `Remote control stopped: ${why}`);
     render();
   }
-  function onControl(ev) { if (s && s.ctl.give === 'on' && !ev.on) giveUp(s, ev.why || 'the input helper stopped'); }
+  function onControl(ev) { const sess = giving('on'); if (sess && !ev.on) giveUp(sess, ev.why || 'the input helper stopped'); }
   // viewer: ask for their mouse and keyboard, or let go
   function askControl(sess) {
     if (!sess.remote.screen) return;
@@ -336,7 +411,7 @@
     const v = $('viewerVideo'); v.classList.remove('ctl'); v.style.cursor = ''; sess.ctl.cursor = null;
     v.removeEventListener(K.tune.MOVE_EV, onMove);
   }
-  const taking = () => (s && s.ctl.take && s.remote.screen ? s : null);   // the session whose screen I drive right now, or null
+  const taking = () => { const sess = pick(); return sess && sess.ctl.take && sess.remote.screen ? sess : null; };   // the session whose screen I drive right now, or null
   // where on their display the pointer is: fractions of the video picture (object-fit: contain leaves bars)
   function at(e) {
     const v = $('viewerVideo'), r = v.getBoundingClientRect();
@@ -359,12 +434,13 @@
   }
   async function setFull(on) {
     on = on === undefined ? !theater : !!on;
-    if (on && !(s && s.remote.screen)) return;
+    const sess = pick();
+    if (on && !(sess && sess.remote.screen)) return;
     if (on === theater) return;
     let got = false; try { got = await window.api.fullscreen(on); } catch (e) { toast(ipcErr(e), 'err'); }
     applyTheater(!!got);
   }
-  function onFullscreen(ev) { applyTheater(!!ev.on && !!(s && s.remote.screen)); }
+  function onFullscreen(ev) { const sess = pick(); applyTheater(!!ev.on && !!(sess && sess.remote.screen)); }
 
   // --- recording what they send ----------------------------------------------------
   // MediaRecorder on a snapshot of the remote stream (their screen, their voice), 1 s pieces
@@ -382,6 +458,7 @@
     sess.recStarting = true;
     try {
       const { id, file } = await window.api.recordStart(sess.pub);
+      if (sess.closed) { window.api.recordStop(id).catch(() => {}); return; }   // the share ended while the file was being created: main removes the empty file
       const stream = new MediaStream(sess.remote.stream.getTracks());   // a snapshot: tracks added later never disturb the recorder
       const recorder = new MediaRecorder(stream, { mimeType: REC_MIME, videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 96_000 });
       const rec = { id, file, recorder, since: Date.now(), bytes: 0, q: Promise.resolve(), timer: null, failed: '' };
@@ -423,17 +500,17 @@
     b.textContent = on ? `● ${fmtClock(Date.now() - sess.rec.since)}${sess.rec.bytes ? ' · ' + fmtBytes(sess.rec.bytes) : ''}` : '● Record';
     b.title = on ? 'Stop recording (the file is kept)' : 'Record what you see and hear from them to a file';
   }
-  function onSettings() { if (s) { s.recWanted = !!S.settings.recordShares; syncRecording(s); if (S.current === s.pub) renderRec(s); } }
+  function onSettings() { for (const sess of map.values()) { sess.recWanted = !!S.settings.recordShares; syncRecording(sess); if (S.current === sess.pub) renderRec(sess); } }
 
   // --- UI ---------------------------------------------------------------------
   function render() {
-    const pub = S.current, sess = s && s.pub === pub ? s : null, mine = !!sess;   // the session of the open chat
+    const pub = S.current, sess = cur(), mine = !!sess, conn = mine && sess.pc ? sess.pc.connectionState : '';   // no pc yet: still connecting
     const sharing = !!(mine && sess.screenTrack), watching = !!(mine && sess.remote.screen);
     const btn = $('btnShare'); btn.textContent = sharing ? '■ Stop sharing' : '⇡ Share screen'; btn.classList.toggle('on', sharing);
     btn.title = sharing ? 'Stop sending your screen' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
     $('btnShareMode').classList.toggle('hidden', sharing);
     const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(sess.micTrack && sess.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = on ? 'Mute your microphone' : sess.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone'; }
-    const pill = $('sharePill'); const state = !mine ? '' : sess.pc.connectionState === 'connected' || sess.pc.connectionState === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') : sess.pc.connectionState === 'failed' ? 'Failed' : 'Connecting…';
+    const pill = $('sharePill'); const state = !mine ? '' : conn === 'connected' || conn === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') : conn === 'failed' ? 'Failed' : 'Connecting…';
     pill.classList.toggle('hidden', !state); pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle');
     $('btnStopCtl').classList.toggle('hidden', !(sharing && sess.ctl.give === 'on'));
     const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
@@ -445,35 +522,37 @@
     document.getElementById('chat').classList.toggle('with-viewer', watching);
     if (mine) renderRec(sess);
     if (theater && !watching) setFull(false);
-    if (s) syncRecording(s);
+    for (const x of map.values()) syncRecording(x);
   }
-  const sessionPub = () => (s ? s.pub : null);
+  const sessionPub = () => { const sess = pick(); return sess ? sess.pub : null; };
 
-  $('btnShare').onclick = () => { if (!S.current) return; if (s && s.pub === S.current && s.screenTrack) stopSharing(s); else start(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
+  $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if (sess && sess.screenTrack) stopSharing(sess); else start(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
   $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
   $('shareMenu').querySelectorAll('button').forEach((b) => (b.onclick = async () => { $('shareMenu').classList.add('hidden'); S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.mode); render(); toast(b.dataset.mode === 'two' ? 'Two way: your contact will be asked to share their screen too' : 'One way: only your screen is sent', 'ok'); }));
   document.addEventListener('click', () => $('shareMenu').classList.add('hidden'));
-  $('btnMic').onclick = () => { if (s) toggleMic(s); };
-  $('viewerTalk').onclick = () => { if (s) toggleMic(s); };
-  $('viewerMute').onclick = () => { if (!s) return; s.muted = !s.muted; $('viewerVideo').muted = s.muted; render(); };
-  $('viewerShareBack').onclick = () => { if (s) start(s.pub, 'two'); };
+  $('btnMic').onclick = () => { const sess = cur(); if (sess) toggleMic(sess); };
+  $('viewerTalk').onclick = () => { const sess = cur(); if (sess) toggleMic(sess); };
+  $('viewerMute').onclick = () => { const sess = cur(); if (!sess) return; sess.muted = !sess.muted; $('viewerVideo').muted = sess.muted; render(); };
+  $('viewerShareBack').onclick = () => { const sess = cur(); if (sess) start(sess.pub, 'two'); };
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && theater && !keysGoRemote()) { e.stopPropagation(); setFull(false); } }, true);
-  $('viewerRec').onclick = () => { if (!s) return; s.recWanted = !s.rec; syncRecording(s); renderRec(s); };
-  $('viewerEnd').onclick = () => { if (s) end(s); };
-  $('shareBackYes').onclick = () => { window.closeModal(); if (s) start(s.pub, 'two'); };
+  $('viewerRec').onclick = () => { const sess = cur(); if (!sess) return; sess.recWanted = !sess.rec; syncRecording(sess); renderRec(sess); };
+  $('viewerEnd').onclick = () => { const sess = cur(); if (sess) end(sess); };
+  $('shareBackYes').onclick = () => { window.closeModal(); const sess = pick(); if (sess) start(sess.pub, 'two'); };
   $('shareBackNo').onclick = () => window.closeModal();
   // remote control: the viewer's input on the video goes to their machine while it is on
-  $('viewerCtl').onclick = () => { if (s) askControl(s); };
-  $('btnStopCtl').onclick = () => { if (s) giveUp(s, 'stopped'); };
-  $('controlYes').onclick = () => { window.closeModal(); if (s) giveControl(s); };
-  $('controlNo').onclick = () => { window.closeModal(); if (s) giveUp(s, 'denied'); };
+  $('viewerCtl').onclick = () => { const sess = cur(); if (sess) askControl(sess); };
+  $('btnStopCtl').onclick = () => { const sess = giving('on'); if (sess) giveUp(sess, 'stopped'); };
+  // the dialog belongs to the session that asked, whichever chat is open
+  $('controlYes').onclick = () => { window.closeModal(); const sess = giving('asked'); if (sess) giveControl(sess); };
+  $('controlNo').onclick = () => { window.closeModal(); const sess = giving('asked'); if (sess) giveUp(sess, 'denied'); };
   {
     const v = $('viewerVideo');
     const tick = (_t, md) => {   // per shown frame: last packet in -> on screen, and the sharer's capture stamp -> on screen
-      if (s && typeof md.receiveTime === 'number') {
-        const f = s.pic || (s.pic = { n: 0, show: 0, c: 0, e2e: 0, worst: 0 });
+      const sess = pick();
+      if (sess && typeof md.receiveTime === 'number') {
+        const f = sess.pic || (sess.pic = { n: 0, show: 0, c: 0, e2e: 0, worst: 0 });
         f.n++; f.show += md.expectedDisplayTime - md.receiveTime;
         if (typeof md.captureTime === 'number') { const e = md.expectedDisplayTime - md.captureTime; f.c++; f.e2e += e; if (e > f.worst) f.worst = e; }
       }
@@ -490,17 +569,20 @@
   }
 
   // debug surface for the UI test (test/ui/share.sh): session internals and audio RTP counters
-  const debug = () => (s ? { sid: s.id, mode: s.mode, rec: !!s.rec, recFile: s.rec ? s.rec.file : null, recBytes: s.rec ? s.rec.bytes : 0, remoteRec: s.remote.rec, theater, askedBack: s.askedBack, polite: s.polite, signaling: s.pc.signalingState, conn: s.pc.connectionState, remote: { screen: s.remote.screen, mic: s.remote.mic, mode: s.remote.mode }, local: { screen: !!s.screenTrack, mic: !!(s.micTrack && s.micTrack.enabled) }, path: s.path, rtt: s.rtt, codec: s.codec, q: s.q || null,
-    ctl: { give: s.ctl.give, take: s.ctl.take, asked: s.ctl.asked, sent: s.ctl.sent, recv: s.ctl.recv, chans: s.ctl.chans.map((c) => `${c.label}:${c.readyState}`) } } : null);
+  const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
+    enc: x.screenSender ? x.screenSender.getParameters().encodings[0] || null : null,
+    ctl: { give: x.ctl.give, take: x.ctl.take, asked: x.ctl.asked, sent: x.ctl.sent, recv: x.ctl.recv, chans: x.ctl.chans.map((c) => `${c.label}:${c.readyState}`) } } : null; };
+  const debugAll = () => ({ sessions: Object.fromEntries([...map.values()].map((x) => [x.pub.slice(0, 8), debug(x.pub)])) });
   async function audio() {
-    if (!s) return null;
+    const sess = pick();
+    if (!sess || !sess.pc) return null;
     const out = { in: null, out: null };
-    (await s.pc.getStats()).forEach((r) => {
+    (await sess.pc.getStats()).forEach((r) => {
       if (r.type === 'inbound-rtp' && r.kind === 'audio') out.in = { packets: r.packetsReceived, energy: r.totalAudioEnergy, level: r.audioLevel };
       if (r.type === 'outbound-rtp' && r.kind === 'audio') out.out = { packets: r.packetsSent, bytes: r.bytesSent };
     });
     return out;
   }
-  window.Share = { onFrame, onStatus, onSettings, onFullscreen, onControl, onCursor, render, end: () => { if (s) end(s); }, setFull, sessionPub, active: () => !!s, lastRecording: () => lastRecording, debug, audio,
+  window.Share = { onFrame, onStatus, onSettings, onFullscreen, onControl, onCursor, render, end: () => { const sess = cur(); if (sess) end(sess); }, setFull, sessionPub, active: () => map.size > 0, lastRecording: () => lastRecording, debug, debugAll, audio,
     inject: (m) => { const sess = taking(); return sess ? sendCtl(sess, m, m && m.t === 'm') : false; } };   // test hook: send one control message as the viewer's input would
 })();

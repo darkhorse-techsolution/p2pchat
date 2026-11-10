@@ -18,7 +18,8 @@
 //   typing {}
 //   breq   { id, i }              send me part i of the bytes of image message `id` (I hold its record)
 //   blob   { id, i, n, d }        that part, base64; n = parts in total, 0 = "I do not have it"
-//   share  { op, ... }            screen-share / call signaling (WebRTC SDP, ICE, state, bye): live only, never stored
+//   share  { op, v?, ... }        screen-share / call signaling (WebRTC SDP, ICE, state, bye): live only, never stored;
+//                                 v = the sender's share protocol version (absent up to 0.7.1)
 //
 // An image message is small on every path above (record only), so frames stay
 // under the 256 KB cap and catch-up and history need nothing new. Whoever holds
@@ -61,6 +62,7 @@ function sanitizeShare(m) {
   if (!m || typeof m !== 'object' || !SHARE_OPS.has(m.op)) return null;
   const sid = str(m.sid, 32); if (!sid) return null;
   const out = { op: m.op, sid };
+  if (Number.isInteger(m.v) && m.v >= 1 && m.v <= 99) out.v = m.v;   // optional: left out when malformed, a frame is never refused over it
   if (m.op === 'sdp') {
     const d = m.description;
     if (!d || typeof d !== 'object' || !['offer', 'answer'].includes(d.type) || str(d.sdp, 100000) === null) return null;
