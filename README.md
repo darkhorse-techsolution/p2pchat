@@ -38,7 +38,8 @@ the Linux build was restarted inside the box's RDP session (vault, window, hotke
 installer was run on a Windows 11 VM: silent install exit 0, `P2P Chat.exe` 0.6.0.0, boot with the DPAPI vault,
 window shown, hotkeys registered, relay up, the three remote-control helpers present under
 `resources/app.asar.unpacked/main/helpers`, and the PowerShell helper compiled its SendInput shim and reported
-`ready` when started by hand with an empty input.
+`ready` when started by hand with an empty input. 0.6.1 (the session-tap change for the macOS helper) is built
+for all three platforms but not installed anywhere yet; the only behaviour change is on macOS.
 
 ## Reaching people outside your network
 
@@ -251,6 +252,14 @@ macOS 26.2, Apple Silicon, Electron 45.1.0 (bundled Node 24.22.1 on BoringSSL):
   reset and end-of-input cleared both. Not verified here: a click or keystroke landing in another application's
   window (the harness does not inject into a live desktop), and the Windows helper beyond starting and compiling
   its SendInput shim.
+- **Remote control under Jump Desktop (0.6.1):** the first real session (this Mac sharing to a Linux box, both
+  reached over remote desktop) moved the pointer but landed no click or key. The Mac's log showed the helper
+  trusted, 234 events in, none dropped; `CGGetEventTapList` showed Jump Desktop Connect's privacy blocker holding
+  an active (filtering) event tap at the HID point for buttons, moves, keys, flags and wheel (its Agent log:
+  "Blocking mouse and keyboard: true" at the session start), the point the helper posted at. The helper now posts
+  at the session point; a pointer move through the rebuilt helper, with the Jump session active, landed at +5,+5
+  and returned exactly. Clicks and keys through it are still not exercised here (nothing is injected into the
+  live desktop); the next real session is that test.
 
 ### Two bugs only the real app caught
 
@@ -320,6 +329,10 @@ Windows device names (`NUL`, `COM1`…) as blob file names, a macOS permission g
   on Windows. Keys are sent as physical keys, so what a key types follows the sharer's layout; shortcuts the viewer's
   OS keeps for itself (⌘-Tab, ⌘-Q, Alt-Tab) never reach the sharer, and Esc leaves the viewer's full screen only
   while control is off. No clipboard sync, no file transfer, no system audio.
+- **Remote control under a remote-desktop host:** tools that block local input on the shared computer (Jump
+  Desktop Connect's privacy mode, for one) do it with a filtering event tap at the HID point of the event stream.
+  Until 0.6.1 the helper posted its clicks and keys at that same point, so such a tap swallowed them while the
+  pointer still moved. Since 0.6.1 it posts at the session point, which sits after the HID taps.
 - **Screenshots are pulled whole, without backpressure**: 8 MB cap per image, parts written to the socket in one go,
   one image at a time per peer, one part in flight, at most 40 parts/s per peer. Auto-download stops at 512 MB of
   images per contact (a Download button fetches past it). On Wayland the capture goes through the desktop portal,

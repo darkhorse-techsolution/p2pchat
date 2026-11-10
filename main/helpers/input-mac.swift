@@ -25,7 +25,10 @@ let MODS: [Int: CGEventFlags] = [56: .maskShift, 60: .maskShift, 59: .maskContro
                                  58: .maskAlternate, 61: .maskAlternate, 55: .maskCommand, 54: .maskCommand, 63: .maskSecondaryFn]
 
 func say(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
-func post(_ ev: CGEvent?) { guard let ev = ev else { return }; ev.flags = flags; ev.post(tap: .cghidEventTap) }
+// Posted at the session tap, not the HID tap: remote-desktop hosts (Jump Desktop Connect's privacy
+// blocker, for one) filter the HID point with an active event tap and swallow synthetic clicks and
+// keys posted there. The session point sits past the HID taps and still moves the cursor.
+func post(_ ev: CGEvent?) { guard let ev = ev else { return }; ev.flags = flags; ev.post(tap: .cgSessionEventTap) }
 func cgButton(_ b: Int) -> CGMouseButton { b == 0 ? .left : b == 1 ? .right : .center }
 
 func move(_ p: CGPoint) {
