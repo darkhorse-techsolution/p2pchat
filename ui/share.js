@@ -27,14 +27,14 @@
   const newSid = () => Math.random().toString(36).slice(2, 12);
 
   const ice = () => window.api.iceConfig(); // read per session, so a Settings change applies to the next share
-  const send = (sess, f) => window.api.share(sess.pub, { sid: sess.id, ...f }).catch((e) => { toast(ipcErr(e), 'err'); if (/offline/.test(ipcErr(e))) close('offline'); });
+  const send = (sess, f) => window.api.share(sess.pub, { sid: sess.id, ...f }).catch((e) => { toast(ipcErr(e), 'err'); if (/offline/.test(ipcErr(e))) close(sess, 'offline'); });
 
   async function create(pub, id) {
     const cfg = await ice();
     const pc = new RTCPeerConnection({ iceServers: cfg.iceServers, iceTransportPolicy: cfg.iceTransportPolicy, bundlePolicy: 'max-bundle' });
     const sess = { pub, id: id || newSid(), pc, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null,
-      remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
+      remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(), closed: false,
       ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null } };
     pc.onnegotiationneeded = async () => {
       try { sess.makingOffer = true; await pc.setLocalDescription(); send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
@@ -47,11 +47,11 @@
       if (!e.streams[0]) sess.remote.stream.addTrack(e.track);
       K.tune.receiver(e.receiver, e.track.kind);
       e.track.onmute = () => render(); e.track.onunmute = () => render(); e.track.onended = () => render();
-      attachRemote(); render();
+      attachRemote(sess); render();
     };
     pc.ondatachannel = (e) => adoptChannel(sess, e.channel);
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') { toast('Screen share connection failed. Check the call server in Settings.', 'err'); close('failed'); }
+      if (pc.connectionState === 'failed') { toast('Screen share connection failed. Check the call server in Settings.', 'err'); close(sess, 'failed'); }
       else render();
     };
     sess.statsTimer = setInterval(() => pollStats(sess), 2000);
@@ -59,9 +59,9 @@
     return sess;
   }
 
-  function attachRemote() {
+  function attachRemote(sess) {
     const v = $('viewerVideo');
-    if (s && s.remote.stream && v.srcObject !== s.remote.stream) { v.srcObject = s.remote.stream; v.muted = s.muted; v.play().catch(() => {}); }
+    if (sess.remote.stream && v.srcObject !== sess.remote.stream) { v.srcObject = sess.remote.stream; v.muted = sess.muted; v.play().catch(() => {}); }
   }
 
   async function pollStats(sess) {
@@ -100,30 +100,38 @@
     const perm = await window.api.screenPermission();   // macOS: ask before trying, with instructions instead of a capture error
     if (perm !== 'ok') { window.showScreenPermission(perm); return; }
     const sess = s || await create(pub);
+    if (sess.closed) return;
     sess.mode = mode || sess.mode;
     if (sess.screenTrack) return;
     let screen;
     try { screen = await navigator.mediaDevices.getDisplayMedia(K.tune.displayConstraints()); }
-    catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); if (!sess.remote.screen && !sess.remote.mic) close('capture'); return; }
+    catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); if (!sess.remote.screen && !sess.remote.mic) close(sess, 'capture'); return; }
     const track = screen.getVideoTracks()[0];
+    if (sess.closed) { track.stop(); return; }              // the session ended while the capture was starting: nothing may keep the screen
     track.contentHint = K.tune.hint(sess.ctl.give === 'on');
     await K.tune.capture(track);
-    track.onended = () => { if (s === sess && sess.screenTrack === track) stopSharing(); }; // the OS ended the capture
+    if (sess.closed) { track.stop(); return; }
+    track.onended = () => { if (!sess.closed && sess.screenTrack === track) stopSharing(sess); }; // the OS ended the capture
     sess.screenTrack = track; sess.local.addTrack(track);
     openChannels(sess);                                     // in the same task as addTrack: one negotiation covers both
     sess.screenSender = sess.pc.addTrack(track, K.tune.streamFor(sess, 'video'));
     K.tune.codecs(sess.pc, sess.screenSender);
     await K.tune.sender(sess);
+    if (sess.closed) return;                                // close() stopped the track it found on the session
     await addMic(sess, true);
+    if (sess.closed) return;
     sendState(sess); render(); renderContacts();
   }
 
   async function addMic(sess, quiet) {
     if (sess.micTrack) return true;
-    if (!(await window.api.micPermission())) { if (!quiet) toast('Microphone access was not allowed; sharing without sound', 'err'); return false; }
+    const allowed = await window.api.micPermission();
+    if (sess.closed) return false;
+    if (!allowed) { if (!quiet) toast('Microphone access was not allowed; sharing without sound', 'err'); return false; }
     try {
       const mic = await navigator.mediaDevices.getUserMedia(K.tune.micConstraints());
       const t = mic.getAudioTracks()[0];
+      if (sess.closed) { t.stop(); return false; }
       sess.micTrack = t; sess.local.addTrack(t); sess.micSender = sess.pc.addTrack(t, K.tune.streamFor(sess, 'audio'));
       return true;
     } catch (e) { if (!quiet) toast(`Microphone: ${e.message}`, 'err'); return false; }
@@ -136,26 +144,26 @@
     sess[which + 'Track'] = null; sess[which + 'Sender'] = null;
   }
 
-  function stopSharing() {
-    if (!s) return;
-    if (s.ctl.give !== 'off') giveUp(s, 'stopped');
-    dropTrack(s, 'screen'); dropTrack(s, 'mic');
-    sendState(s);
-    if (!s.remote.screen && !s.remote.mic) close('stopped'); else { render(); renderContacts(); }
+  function stopSharing(sess) {
+    if (sess.ctl.give !== 'off') giveUp(sess, 'stopped');
+    dropTrack(sess, 'screen'); dropTrack(sess, 'mic');
+    sendState(sess);
+    if (!sess.remote.screen && !sess.remote.mic) close(sess, 'stopped'); else { render(); renderContacts(); }
   }
 
-  async function toggleMic() {
-    if (!s) return;
-    if (s.micTrack) { s.micTrack.enabled = !s.micTrack.enabled; }
-    else await addMic(s, false);
-    sendState(s); render();
+  async function toggleMic(sess) {
+    if (sess.micTrack) { sess.micTrack.enabled = !sess.micTrack.enabled; }
+    else await addMic(sess, false);
+    if (sess.closed) return;
+    sendState(sess); render();
   }
 
   const sendState = (sess) => send(sess, { op: 'state', screen: !!sess.screenTrack, mic: !!(sess.micTrack && sess.micTrack.enabled), mode: sess.mode, rec: !!sess.rec });
 
-  function close(why) {
-    if (!s) return;
-    const sess = s; s = null;
+  function close(sess, why) {
+    if (sess.closed) return;
+    sess.closed = true;                 // first: everything that was waiting on this session checks it and stops
+    if (s === sess) s = null;
     clearInterval(sess.statsTimer);
     if (sess.ctl.give === 'on') window.api.controlRevoke().catch(() => {});
     clearTimeout(sess.ctl.flush); clearTimeout(sess.ctl.askTimer);
@@ -170,43 +178,44 @@
     if (why === 'offline') toast('Screen share ended: the contact went offline', 'err');
     render(); renderContacts();
   }
-  function end() { if (!s) return; send(s, { op: 'bye' }); close('ended'); }
+  function end(sess) { send(sess, { op: 'bye' }); close(sess, 'ended'); }
 
   // --- their side ---------------------------------------------------------------------
   async function onFrame(ev) {
     try {
-      if (ev.op === 'bye') { if (s && s.pub === ev.pub) close('bye'); return; }
-      if (!s) {
+      if (ev.op === 'bye') { if (s && s.pub === ev.pub) close(s, 'bye'); return; }
+      let sess = s;                     // taken once: `s` can change during the awaits below
+      if (!sess) {
         // a share starts with a `state` (sent as soon as the tracks exist) followed by the offer; either opens the session here
         const opens = (ev.op === 'sdp' && ev.description.type === 'offer') || (ev.op === 'state' && (ev.screen || ev.mic));
         if (!opens) return; // stale ice/state after a bye
-        await create(ev.pub, ev.sid);
-      } else if (s.pub !== ev.pub) { if (ev.op === 'sdp' || ev.op === 'state') window.api.share(ev.pub, { sid: ev.sid, op: 'bye' }).catch(() => {}); return; } // busy with someone else
+        sess = await create(ev.pub, ev.sid);
+      } else if (sess.pub !== ev.pub) { if (ev.op === 'sdp' || ev.op === 'state') window.api.share(ev.pub, { sid: ev.sid, op: 'bye' }).catch(() => {}); return; } // busy with someone else
       if (ev.op === 'sdp') {
-        const d = ev.description, pc = s.pc;
-        const readyForOffer = !s.makingOffer && (pc.signalingState === 'stable' || s.settingAnswer);
+        const d = ev.description, pc = sess.pc;
+        const readyForOffer = !sess.makingOffer && (pc.signalingState === 'stable' || sess.settingAnswer);
         const collision = d.type === 'offer' && !readyForOffer;
-        s.ignoreOffer = !s.polite && collision;
-        if (s.ignoreOffer) return;
-        s.settingAnswer = d.type === 'answer';
+        sess.ignoreOffer = !sess.polite && collision;
+        if (sess.ignoreOffer) return;
+        sess.settingAnswer = d.type === 'answer';
         await pc.setRemoteDescription(d);
-        s.settingAnswer = false;
-        if (d.type === 'offer') { await pc.setLocalDescription(); send(s, { op: 'sdp', description: pc.localDescription.toJSON() }); }
+        sess.settingAnswer = false;
+        if (d.type === 'offer') { await pc.setLocalDescription(); send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
       } else if (ev.op === 'ice') {
-        try { await s.pc.addIceCandidate(ev.candidate === null ? undefined : ev.candidate); } catch (e) { if (!s.ignoreOffer) console.warn('ice', e.message); }
+        try { await sess.pc.addIceCandidate(ev.candidate === null ? undefined : ev.candidate); } catch (e) { if (!sess.ignoreOffer) console.warn('ice', e.message); }
       } else if (ev.op === 'state') {
-        const was = s.remote.screen, wasRec = s.remote.rec;
-        s.remote.screen = ev.screen; s.remote.mic = ev.mic; s.remote.mode = ev.mode; s.remote.rec = !!ev.rec;
-        if (s.remote.rec && !wasRec && s.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
-        if (ev.screen && !was) { attachRemote(); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
-        if (!ev.screen && (s.ctl.take || s.ctl.asked)) { stopTaking(s); clearTimeout(s.ctl.askTimer); s.ctl.asked = false; }
-        if (ev.mode === 'two' && ev.screen && !s.screenTrack && !s.askedBack) { s.askedBack = true; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
-        if (!ev.screen && !ev.mic && !s.screenTrack && !s.micTrack) { close('stopped'); return; }
+        const was = sess.remote.screen, wasRec = sess.remote.rec;
+        sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
+        if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
+        if (ev.screen && !was) { attachRemote(sess); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
+        if (!ev.screen && (sess.ctl.take || sess.ctl.asked)) { stopTaking(sess); clearTimeout(sess.ctl.askTimer); sess.ctl.asked = false; }
+        if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
+        if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
         render(); renderContacts();
       }
     } catch (e) { console.error('share frame', e); }
   }
-  function onStatus(ev) { if (s && ev.pub === s.pub && ev.status !== 'online') close('offline'); }
+  function onStatus(ev) { if (s && ev.pub === s.pub && ev.status !== 'online') close(s, 'offline'); }
 
   // --- remote control ----------------------------------------------------------------
   function adoptChannel(sess, ch) {
@@ -279,9 +288,9 @@
   }
   function onCursor(c) { if (s && s.ctl.give === 'on' && c && typeof c === 'object') sendCtl(s, { t: 'cur', w: c.w, h: c.h, pw: c.pw, ph: c.ph, hx: c.hx, hy: c.hy, png: c.png }); }
   async function giveControl(sess) {
-    if (sess !== s || !sess.screenTrack) { sess.ctl.give = 'off'; sendCtl(sess, { t: 'ctl', on: false, why: 'notsharing' }); render(); return; }
+    if (sess.closed || !sess.screenTrack) { sess.ctl.give = 'off'; sendCtl(sess, { t: 'ctl', on: false, why: 'notsharing' }); render(); return; }
     let r; try { r = await window.api.controlGrant(); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
-    if (sess !== s) return;
+    if (sess.closed) return;
     const name = K.nameOf(sess.pub);
     if (r && r.ok) {
       sess.ctl.give = 'on';
@@ -306,13 +315,13 @@
   }
   function onControl(ev) { if (s && s.ctl.give === 'on' && !ev.on) giveUp(s, ev.why || 'the input helper stopped'); }
   // viewer: ask for their mouse and keyboard, or let go
-  function askControl() {
-    if (!s || !s.remote.screen) return;
-    if (s.ctl.take) { stopTaking(s); sendCtl(s, { t: 'rel' }); toast('You no longer control their screen'); render(); return; }
-    if (s.ctl.asked) return;
-    if (!sendCtl(s, { t: 'req' })) { toast('Not connected yet: try again in a moment', 'err'); return; }
-    const sess = s; sess.ctl.asked = true;
-    sess.ctl.askTimer = setTimeout(() => { if (sess.ctl.asked) { sess.ctl.asked = false; if (s === sess) { toast(`${K.nameOf(sess.pub)} has not answered`); render(); } } }, K.tune.ASK_MS);
+  function askControl(sess) {
+    if (!sess.remote.screen) return;
+    if (sess.ctl.take) { stopTaking(sess); sendCtl(sess, { t: 'rel' }); toast('You no longer control their screen'); render(); return; }
+    if (sess.ctl.asked) return;
+    if (!sendCtl(sess, { t: 'req' })) { toast('Not connected yet: try again in a moment', 'err'); return; }
+    sess.ctl.asked = true;
+    sess.ctl.askTimer = setTimeout(() => { if (sess.ctl.asked) { sess.ctl.asked = false; if (!sess.closed) { toast(`${K.nameOf(sess.pub)} has not answered`); render(); } } }, K.tune.ASK_MS);
     render();
   }
   function startTaking(sess) {
@@ -327,7 +336,7 @@
     const v = $('viewerVideo'); v.classList.remove('ctl'); v.style.cursor = ''; sess.ctl.cursor = null;
     v.removeEventListener(K.tune.MOVE_EV, onMove);
   }
-  const taking = () => !!(s && s.ctl.take && s.remote.screen);
+  const taking = () => (s && s.ctl.take && s.remote.screen ? s : null);   // the session whose screen I drive right now, or null
   // where on their display the pointer is: fractions of the video picture (object-fit: contain leaves bars)
   function at(e) {
     const v = $('viewerVideo'), r = v.getBoundingClientRect();
@@ -337,8 +346,8 @@
     const c = (x) => Math.min(1, Math.max(0, x));
     return { x: +c((e.clientX - ox) / cw).toFixed(4), y: +c((e.clientY - oy) / ch).toFixed(4) };
   }
-  const onMove = (e) => { if (taking()) K.tune.sendMove(s, { t: 'm', ...at(e) }); };
-  const keysGoRemote = () => taking() && (document.activeElement === $('viewerVideo') || theater) && $('backdrop').classList.contains('hidden');
+  const onMove = (e) => { const sess = taking(); if (sess) K.tune.sendMove(sess, { t: 'm', ...at(e) }); };
+  const keysGoRemote = () => ((document.activeElement === $('viewerVideo') || theater) && $('backdrop').classList.contains('hidden') ? taking() : null);
 
   // --- full screen ----------------------------------------------------------------------
   // The window itself goes full screen (main: simple fullscreen on macOS, setFullScreen
@@ -387,7 +396,7 @@
       recorder.onerror = (e) => { rec.failed = rec.failed || (e.error && e.error.message) || 'recorder error'; if (recorder.state !== 'inactive') recorder.stop(); };
       recorder.onstop = () => finishRecording(sess, rec);
       recorder.start(1000);
-      rec.timer = setInterval(() => { if (sess.rec === rec && s === sess && S.current === sess.pub) renderRec(sess); }, 1000);
+      rec.timer = setInterval(() => { if (sess.rec === rec && !sess.closed && S.current === sess.pub) renderRec(sess); }, 1000);
       sess.rec = rec;
       sendState(sess); render();
     } catch (e) { toast(`Recording did not start: ${ipcErr(e)}`, 'err'); sess.recWanted = false; }
@@ -403,61 +412,60 @@
     if (saved) lastRecording = saved.file;
     if (rec.failed) toast(`Recording stopped: ${rec.failed}${saved ? ` (${fmtBytes(saved.bytes)} kept)` : ''}`, 'err');
     else if (saved) toast(`Recording saved (${fmtBytes(saved.bytes)}): ${saved.file}`, 'ok');
-    if (s === sess) { sendState(sess); render(); }
+    if (!sess.closed) { sendState(sess); render(); }
   }
-  function syncRecording() {
-    if (!s) return;
-    if (s.recWanted && !s.rec) startRecording(s);               // waits for the tracks if they are not there yet
-    else if (s.rec && (!s.recWanted || !s.remote.screen)) stopRecording(s);
+  function syncRecording(sess) {
+    if (sess.recWanted && !sess.rec) startRecording(sess);      // waits for the tracks if they are not there yet
+    else if (sess.rec && (!sess.recWanted || !sess.remote.screen)) stopRecording(sess);
   }
   function renderRec(sess) {
     const b = $('viewerRec'), on = !!sess.rec; b.classList.toggle('on', on);
     b.textContent = on ? `● ${fmtClock(Date.now() - sess.rec.since)}${sess.rec.bytes ? ' · ' + fmtBytes(sess.rec.bytes) : ''}` : '● Record';
     b.title = on ? 'Stop recording (the file is kept)' : 'Record what you see and hear from them to a file';
   }
-  function onSettings() { if (s) { s.recWanted = !!S.settings.recordShares; syncRecording(); if (S.current === s.pub) renderRec(s); } }
+  function onSettings() { if (s) { s.recWanted = !!S.settings.recordShares; syncRecording(s); if (S.current === s.pub) renderRec(s); } }
 
   // --- UI ---------------------------------------------------------------------
   function render() {
-    const pub = S.current, mine = s && s.pub === pub;
-    const sharing = !!(mine && s.screenTrack), watching = !!(mine && s.remote.screen);
+    const pub = S.current, sess = s && s.pub === pub ? s : null, mine = !!sess;   // the session of the open chat
+    const sharing = !!(mine && sess.screenTrack), watching = !!(mine && sess.remote.screen);
     const btn = $('btnShare'); btn.textContent = sharing ? '■ Stop sharing' : '⇡ Share screen'; btn.classList.toggle('on', sharing);
     btn.title = sharing ? 'Stop sending your screen' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
     $('btnShareMode').classList.toggle('hidden', sharing);
-    const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(s.micTrack && s.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = on ? 'Mute your microphone' : s.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone'; }
-    const pill = $('sharePill'); const state = !mine ? '' : s.pc.connectionState === 'connected' || s.pc.connectionState === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && s.remote.rec ? ' · recorded' : '') + (sharing && s.ctl.give === 'on' ? ' · controlled' : '') : s.pc.connectionState === 'failed' ? 'Failed' : 'Connecting…';
+    const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(sess.micTrack && sess.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = on ? 'Mute your microphone' : sess.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone'; }
+    const pill = $('sharePill'); const state = !mine ? '' : sess.pc.connectionState === 'connected' || sess.pc.connectionState === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') : sess.pc.connectionState === 'failed' ? 'Failed' : 'Connecting…';
     pill.classList.toggle('hidden', !state); pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle');
-    $('btnStopCtl').classList.toggle('hidden', !(sharing && s.ctl.give === 'on'));
+    $('btnStopCtl').classList.toggle('hidden', !(sharing && sess.ctl.give === 'on'));
     const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
     if (watching) {
-      $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = s.micTrack && s.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = s.muted ? '🔇' : '🔊'; attachRemote();
-      const cb = $('viewerCtl'); cb.textContent = s.ctl.take ? '🖱 Controlling' : s.ctl.asked ? '🖱 Asking…' : '🖱 Control'; cb.classList.toggle('on', s.ctl.take);
-      cb.title = s.ctl.take ? 'Stop controlling their screen' : s.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard';
+      $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = sess.micTrack && sess.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = sess.muted ? '🔇' : '🔊'; attachRemote(sess);
+      const cb = $('viewerCtl'); cb.textContent = sess.ctl.take ? '🖱 Controlling' : sess.ctl.asked ? '🖱 Asking…' : '🖱 Control'; cb.classList.toggle('on', sess.ctl.take);
+      cb.title = sess.ctl.take ? 'Stop controlling their screen' : sess.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard';
     }
     document.getElementById('chat').classList.toggle('with-viewer', watching);
-    if (mine) renderRec(s);
+    if (mine) renderRec(sess);
     if (theater && !watching) setFull(false);
-    syncRecording();
+    if (s) syncRecording(s);
   }
   const sessionPub = () => (s ? s.pub : null);
 
-  $('btnShare').onclick = () => { if (!S.current) return; if (s && s.pub === S.current && s.screenTrack) stopSharing(); else start(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
+  $('btnShare').onclick = () => { if (!S.current) return; if (s && s.pub === S.current && s.screenTrack) stopSharing(s); else start(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
   $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
   $('shareMenu').querySelectorAll('button').forEach((b) => (b.onclick = async () => { $('shareMenu').classList.add('hidden'); S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.mode); render(); toast(b.dataset.mode === 'two' ? 'Two way: your contact will be asked to share their screen too' : 'One way: only your screen is sent', 'ok'); }));
   document.addEventListener('click', () => $('shareMenu').classList.add('hidden'));
-  $('btnMic').onclick = toggleMic;
-  $('viewerTalk').onclick = toggleMic;
+  $('btnMic').onclick = () => { if (s) toggleMic(s); };
+  $('viewerTalk').onclick = () => { if (s) toggleMic(s); };
   $('viewerMute').onclick = () => { if (!s) return; s.muted = !s.muted; $('viewerVideo').muted = s.muted; render(); };
   $('viewerShareBack').onclick = () => { if (s) start(s.pub, 'two'); };
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && theater && !keysGoRemote()) { e.stopPropagation(); setFull(false); } }, true);
-  $('viewerRec').onclick = () => { if (!s) return; s.recWanted = !s.rec; syncRecording(); renderRec(s); };
-  $('viewerEnd').onclick = end;
+  $('viewerRec').onclick = () => { if (!s) return; s.recWanted = !s.rec; syncRecording(s); renderRec(s); };
+  $('viewerEnd').onclick = () => { if (s) end(s); };
   $('shareBackYes').onclick = () => { window.closeModal(); if (s) start(s.pub, 'two'); };
   $('shareBackNo').onclick = () => window.closeModal();
   // remote control: the viewer's input on the video goes to their machine while it is on
-  $('viewerCtl').onclick = askControl;
+  $('viewerCtl').onclick = () => { if (s) askControl(s); };
   $('btnStopCtl').onclick = () => { if (s) giveUp(s, 'stopped'); };
   $('controlYes').onclick = () => { window.closeModal(); if (s) giveControl(s); };
   $('controlNo').onclick = () => { window.closeModal(); if (s) giveUp(s, 'denied'); };
@@ -472,13 +480,13 @@
       v.requestVideoFrameCallback(tick);
     };
     v.requestVideoFrameCallback(tick);
-    v.addEventListener('pointerdown', (e) => { if (!taking()) return; e.preventDefault(); v.focus(); try { v.setPointerCapture(e.pointerId); } catch {} const p = at(e); s.ctl.move = null; sendCtl(s, { t: 'm', ...p }); sendCtl(s, { t: 'b', b: e.button, d: 1, ...p }); });
-    v.addEventListener('pointerup', (e) => { if (!taking()) return; e.preventDefault(); sendCtl(s, { t: 'b', b: e.button, d: 0, ...at(e) }); });
-    v.addEventListener('wheel', (e) => { if (!taking()) return; e.preventDefault(); const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1; sendCtl(s, { t: 'w', dx: Math.round(e.deltaX * k), dy: Math.round(e.deltaY * k), ...at(e) }); }, { passive: false });
+    v.addEventListener('pointerdown', (e) => { const sess = taking(); if (!sess) return; e.preventDefault(); v.focus(); try { v.setPointerCapture(e.pointerId); } catch {} const p = at(e); sess.ctl.move = null; sendCtl(sess, { t: 'm', ...p }); sendCtl(sess, { t: 'b', b: e.button, d: 1, ...p }); });
+    v.addEventListener('pointerup', (e) => { const sess = taking(); if (!sess) return; e.preventDefault(); sendCtl(sess, { t: 'b', b: e.button, d: 0, ...at(e) }); });
+    v.addEventListener('wheel', (e) => { const sess = taking(); if (!sess) return; e.preventDefault(); const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1; sendCtl(sess, { t: 'w', dx: Math.round(e.deltaX * k), dy: Math.round(e.deltaY * k), ...at(e) }); }, { passive: false });
     v.addEventListener('contextmenu', (e) => { if (taking()) e.preventDefault(); });
-    const onKey = (e) => { if (!keysGoRemote()) return; e.preventDefault(); e.stopPropagation(); if (e.repeat) return; sendCtl(s, { t: 'k', c: e.code, d: e.type === 'keydown' ? 1 : 0 }); };
+    const onKey = (e) => { const sess = keysGoRemote(); if (!sess) return; e.preventDefault(); e.stopPropagation(); if (e.repeat) return; sendCtl(sess, { t: 'k', c: e.code, d: e.type === 'keydown' ? 1 : 0 }); };
     document.addEventListener('keydown', onKey, true); document.addEventListener('keyup', onKey, true);
-    window.addEventListener('blur', () => { if (taking()) sendCtl(s, { t: 'r' }); });   // nothing stays pressed over there when this window loses the keyboard
+    window.addEventListener('blur', () => { const sess = taking(); if (sess) sendCtl(sess, { t: 'r' }); });   // nothing stays pressed over there when this window loses the keyboard
   }
 
   // debug surface for the UI test (test/ui/share.sh): session internals and audio RTP counters
@@ -493,6 +501,6 @@
     });
     return out;
   }
-  window.Share = { onFrame, onStatus, onSettings, onFullscreen, onControl, onCursor, render, end, setFull, sessionPub, active: () => !!s, lastRecording: () => lastRecording, debug, audio,
-    inject: (m) => (taking() ? sendCtl(s, m, m && m.t === 'm') : false) };   // test hook: send one control message as the viewer's input would
+  window.Share = { onFrame, onStatus, onSettings, onFullscreen, onControl, onCursor, render, end: () => { if (s) end(s); }, setFull, sessionPub, active: () => !!s, lastRecording: () => lastRecording, debug, audio,
+    inject: (m) => { const sess = taking(); return sess ? sendCtl(sess, m, m && m.t === 'm') : false; } };   // test hook: send one control message as the viewer's input would
 })();
