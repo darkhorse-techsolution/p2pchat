@@ -458,8 +458,9 @@
     if (sess.rec || sess.recStarting || !recReady(sess)) return;
     if (!REC_MIME) { toast('Recording is not supported here', 'err'); sess.recWanted = false; return; }
     sess.recStarting = true;
+    let id, file;
     try {
-      const { id, file } = await window.api.recordStart(sess.pub);
+      ({ id, file } = await window.api.recordStart(sess.pub));
       if (sess.closed) { window.api.recordStop(id).catch(() => {}); return; }   // the share ended while the file was being created: main removes the empty file
       const stream = new MediaStream(sess.remote.stream.getTracks());   // a snapshot: tracks added later never disturb the recorder
       const recorder = new MediaRecorder(stream, { mimeType: REC_MIME, videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 96_000 });
@@ -478,7 +479,10 @@
       rec.timer = setInterval(() => { if (sess.rec === rec && !sess.closed && S.current === sess.pub) renderRec(sess); }, 1000);
       sess.rec = rec;
       sendState(sess); render();
-    } catch (e) { toast(`Recording did not start: ${ipcErr(e)}`, 'err'); sess.recWanted = false; }
+    } catch (e) {
+      if (id && !sess.rec) window.api.recordStop(id).catch(() => {});   // the file exists but nothing records into it: left open it would count toward main's two recordings for good
+      toast(`Recording did not start: ${ipcErr(e)}`, 'err'); sess.recWanted = false;
+    }
     finally { sess.recStarting = false; }
   }
   function stopRecording(sess) { const rec = sess.rec; if (!rec) return; if (rec.recorder.state !== 'inactive') rec.recorder.stop(); else finishRecording(sess, rec); }
