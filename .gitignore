@@ -3,3 +3,4 @@ dist/
 main/turn.json
 .DS_Store
 *.log
+main/helpers/p2pchat-input

@@ -1,7 +1,7 @@
 {
   "name": "p2pchat",
   "productName": "P2P Chat",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Peer-to-peer, end-to-end encrypted chat with no user identifiers, persistent encrypted history, and a window that cannot be screen-captured",
   "main": "main/main.js",
   "license": "AGPL-3.0",
@@ -11,7 +11,8 @@
     "start": "./run.sh",
     "test": "./test/run.sh",
     "icon": "node build/make-icon.js 1024",
-    "dist:mac": "P2P_ELECTRON_DIST=/Users/max/Public/shield-wrap/node_modules/electron/dist electron-builder --config electron-builder.config.js --mac --arm64 && electron-builder --config electron-builder.config.js --mac --x64",
+    "helper:mac": "sh main/helpers/make-mac.sh",
+    "dist:mac": "npm run helper:mac && P2P_ELECTRON_DIST=/Users/max/Public/shield-wrap/node_modules/electron/dist electron-builder --config electron-builder.config.js --mac --arm64 && electron-builder --config electron-builder.config.js --mac --x64",
     "dist:win": "electron-builder --config electron-builder.config.js --win nsis --x64",
     "dist:linux": "electron-builder --config electron-builder.config.js --linux --x64",
     "dist": "npm run dist:mac && npm run dist:win && npm run dist:linux"

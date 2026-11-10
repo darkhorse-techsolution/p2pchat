@@ -27,7 +27,8 @@ module.exports = {
     resetAdHocDarwinSignature: true,
   },
   directories: { buildResources: 'build', output: 'dist' },
-  files: ['main/**', 'core/**', 'ui/**', 'package.json', '!**/*.md', '!test/**', '!relay/**', '!build/**', '!dist/**'],
+  files: ['main/**', 'core/**', 'ui/**', 'package.json', '!**/*.md', '!**/*.swift', '!main/helpers/make-mac.sh', '!test/**', '!relay/**', '!build/**', '!dist/**'],
+  asarUnpack: ['main/helpers/**'],   // the remote-control helpers are run as separate processes, so they must exist as real files
   publish: null,
 
   mac: {
@@ -79,5 +80,5 @@ module.exports = {
     description: 'Peer-to-peer, end-to-end encrypted chat with no user identifiers. History lives in an encrypted vault on your device and syncs device to device.',
     syncDesktopName: true,         // installs io.p2pchat.P2PChat.desktop, matching app.setDesktopName
   },
-  deb: { depends: ['libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0'] },
+  deb: { depends: ['libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0', 'python3'] },   // python3 + libxtst6: the remote-control helper
 };

@@ -8,6 +8,7 @@ const { Store } = require('../core/store.js');
 const { Transport } = require('../core/transport.js');
 const { Engine } = require('../core/engine.js');
 const { trayIcon } = require('./icon.js');
+const { createController } = require('./input.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -337,6 +338,7 @@ const SHOT_MAX_EDGE = 2560, SHOT_QUALITY = 85;
 const screenPermission = () => { if (!isMac) return 'granted'; try { return systemPreferences.getMediaAccessStatus('screen'); } catch { return 'unknown'; } };
 let capturing = false; // window hidden for a shot: the pop-up card is hidden too and none may appear until the shot is taken
 let screenPermAtBoot = 'granted'; // macOS: what TCC said when this process started (set in boot)
+let sharedDisplay = null; // the display handed to the last getDisplayMedia (the one a share sends); remote control maps onto it
 // The display this window is on (or the primary one), and its size in pixels.
 function targetDisplay() {
   const display = win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
@@ -385,7 +387,7 @@ handle('state', () => ({
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
-  recordingsDir: recordingsDir(),
+  recordingsDir: recordingsDir(), control: control.status(),
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -444,6 +446,20 @@ function setViewerFullscreen(on) {
   return on;
 }
 handle('fullscreen', (_e, on) => setViewerFullscreen(on));
+// --- remote control of the shared display ------------------------------------------
+// The sharer allowed the viewer to drive this machine: a helper process posts the viewer's
+// events to the OS (main/input.js). Granted per share, stopped by the sharer, the share's
+// end, a dead renderer or quit. The helpers live outside the asar (asarUnpack).
+const helpersDir = path.join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'main', 'helpers');
+const control = createController({ log, helpersDir, screen, systemPreferences });
+control.onExit = (why) => push('control', { on: false, why });
+handle('controlGrant', () => {
+  if (!sharedDisplay) return { ok: false, reason: 'notsharing', message: 'Nothing is being shared' };
+  const d = screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) || sharedDisplay;
+  return control.start(d);
+});
+handle('controlRevoke', () => { control.stop('revoked'); return true; });
+ipcMain.on('input', (e, ev) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; control.event(ev); });
 // Recording an incoming share: the renderer's MediaRecorder streams WebM pieces here and they
 // are appended, in order, to a plain file in the Videos folder. Deliberately not in the vault:
 // a recording is for playing in any player. Files are created exclusively and never reused.
@@ -631,13 +647,13 @@ async function boot() {
     if (!win || win.isDestroyed() || req.frame !== win.webContents.mainFrame) return cb(null);
     const { display, want } = targetDisplay();
     desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
-      .then((sources) => { const src = pickSource(sources, display, want); log.info('display media', src ? src.name : 'no source'); cb(src ? { video: src } : null); })
+      .then((sources) => { const src = pickSource(sources, display, want); log.info('display media', src ? src.name : 'no source'); if (src) sharedDisplay = display; cb(src ? { video: src } : null); })
       .catch((e) => { log.error('display media', e); cb(null); });
   });
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.on('console-message', (d) => { if (d.level === 'error' || !PROD) logLine(d.level === 'error' ? 'ERROR' : 'INFO', ['renderer', d.message, d.sourceId, d.lineNumber]); });
   win.webContents.on('preload-error', (_e, p, err) => log.error('preload', p, err));
-  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); if (d.reason !== 'clean-exit') win.webContents.reload(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); control.stop('renderer gone'); if (d.reason !== 'clean-exit') win.webContents.reload(); });
   if (isWin) win.setSkipTaskbar(true);
   log.info('window created');
   applyProtection(win);
@@ -671,7 +687,7 @@ async function boot() {
   applyMode(settings().mode || 'overlap');
 }
 
-app.on('before-quit', () => { quitting = true; globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); });
+app.on('before-quit', () => { quitting = true; control.stop('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); });
 app.on('will-quit', () => { if (engine) engine.stop(); });
 app.on('window-all-closed', () => { if (!BACKGROUND_APP) app.quit(); });
 app.on('activate', showWindow);

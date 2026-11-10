@@ -32,7 +32,13 @@ source; screen sharing from source on macOS and on the Linux box (Xvfb), across 
 the two. On Windows both rest on `desktopCapturer` and WebRTC being the same code there; the packaged
 the packaged macOS 0.4.1 and 0.5.0 were installed into /Applications and run on this Mac (0.5.0 booted with the
 vault key from the Keychain, the relay up and both hotkeys registered); Linux 0.5.0 was installed per user on the
-Ubuntu box and restarted inside its RDP session; Windows 0.5.0 is built but has not been run.
+Ubuntu box and restarted inside its RDP session; Windows 0.5.0 is built but has not been run. 0.6.0: the
+macOS build was installed over 0.5.0 (it stops at the Keychain prompt described above until it is allowed),
+the Linux build was restarted inside the box's RDP session (vault, window, hotkeys, relay up), and the Windows
+installer was run on a Windows 11 VM: silent install exit 0, `P2P Chat.exe` 0.6.0.0, boot with the DPAPI vault,
+window shown, hotkeys registered, relay up, the three remote-control helpers present under
+`resources/app.asar.unpacked/main/helpers`, and the PowerShell helper compiled its SendInput shim and reported
+`ready` when started by hand with an empty input.
 
 ## Reaching people outside your network
 
@@ -77,10 +83,15 @@ from Settings (macOS) or the tray icon (Windows).
 Builds here are signed with a self-signed certificate, **P2P Chat Local Signing**, kept in its own
 keychain (`~/Library/Keychains/p2pchat-sign.keychain-db`, password in `~/.p2pchat-sign-keychain-pass`).
 It is not an Apple Developer ID, so other Macs still show the "unverified developer" dialog once, but
-it is the *same* identity for every build: macOS binds the Keychain grant (the vault key) and the
-Screen Recording / microphone permissions to the signing identity, so with an ad-hoc signature (`-`)
-every update was a new app and each one asked again, and a stale "allowed" Screen Recording entry
-silently became "denied" (that is what broke screen sharing after 0.4.0 was installed over 0.3.1).
+it is the *same* identity for every build: macOS binds the Screen Recording, microphone and
+Accessibility permissions to the signing identity, so with an ad-hoc signature (`-`) every update was a
+new app and each one asked again, and a stale "allowed" Screen Recording entry silently became "denied"
+(that is what broke screen sharing after 0.4.0 was installed over 0.3.1). The Keychain is the exception:
+the access list of the "P2P Chat Safe Storage" item records each build's code hash (`security
+dump-keychain -a` shows `requirement: cdhash` entries, observed after installing 0.6.0 over 0.5.0), so a
+self-signed build still gets the one Keychain prompt after every update. Enter the login password and
+click **Always Allow**; the app waits at "safeStorage: checking availability" until that is answered. A
+Developer ID identity is what makes that entry a stable requirement instead of a hash.
 `P2P_MAC_IDENTITY=- npm run dist:mac` falls back to ad-hoc. To recreate the identity on another Mac:
 make a code-signing certificate (openssl `-addext extendedKeyUsage=codeSigning`), import it into a
 keychain with `security import -T /usr/bin/codesign`, `security set-key-partition-list`, add that
@@ -93,6 +104,7 @@ dialog). When a build is still refused Screen Recording after an update, the app
 npm install              # electron-builder is the only (dev) dependency
 npm run icon             # build/icon.png, drawn by code; .icns / .ico derived from it
 cp main/turn.example.json main/turn.json   # call server (STUN/TURN) host + credential, never committed; see relay/README.md
+npm run helper:mac       # compiles main/helpers/input-mac.swift (remote control) into a universal binary; needs the Xcode Command Line Tools; dist:mac runs it too
 npm run dist:mac         # arm64 reuses the local Electron; x64 downloads one (~120 MB)
 npm run dist:win         # NSIS installer, built on macOS, no wine needed
 npm run dist:linux       # deb + AppImage
@@ -169,7 +181,7 @@ It never contains message text, names or keys.
 | **History** | Every message is stored on both devices in a vault encrypted with AES-256-GCM. The vault key is wrapped by the OS keychain (`safeStorage`). On every connect the peers exchange what they hold and resend what the other lacks, so messages written while someone was offline arrive when they return. **Restore history from peer** rebuilds a lost conversation from the other device's copy. |
 | **Code** | `</>` or `⌘E` for code mode, `⌘↩` to send. Fenced blocks typed as text (` ```py … ``` `) become code. Pasting something that looks like code switches mode and guesses the language. Rendered with a built-in highlighter and a Copy button. |
 | **Screenshots** | 📷 in the composer: one click captures the display the window is on and sends it. With capture blocking on, macOS and Windows leave the chat window itself out of the shot (that is what the blocking is); on Linux, or with blocking off, the window is hidden for the shot. JPEG, long edge capped at 2560 px. The record travels as a normal message; the receiver then pulls the bytes one 96 KB part at a time (the next ask goes out when the previous part is in, so a sender never has more than one part in flight per peer, whatever a peer asks for), frames stay under the 256 KB cap, the relay is unchanged, and offline catch-up and restore-from-peer carry images too. Stored as one sealed file per image next to the vault (AES-256-GCM, same key, fsynced), never inside it; a damaged file is dropped and pulled again. Click an image to view it full size; Copy puts a PNG on the clipboard; Save… writes the file. macOS needs Screen Recording permission once: the app says so and opens the setting. |
-| **Screen share with voice** | **⇡ Share screen** in the chat header: one click sends the display the window is on, plus your microphone, to that contact. Nothing else opens on your side: the button turns into **■ Stop sharing** and a red **Sharing** pill appears (the sidebar row shows "● live"). The ▾ next to it picks the mode, saved for next time: **one way** (default) sends only yours; **two way** also asks the contact to share theirs through an in-app prompt ("Share my screen" / "Just watch"). The contact sees your screen in a panel at the top of the chat with the messages still usable underneath, with mute, fullscreen, **Talk** (sends their mic back), **Share mine** (turns it two-way at any point) and **End**. Media is WebRTC inside the app's own window (hardware video, Opus audio with echo cancellation, DTLS-SRTP), and the signaling travels over the chat's end-to-end channel, so the media keys are authenticated by the same long-term keys as the messages. Between two home networks it goes through the call server from Settings (coturn on your box, STUN + TURN; it only ever sees encrypted media; "route through the server only" hides your IP from the contact). The capture-blocked chat window is left out of what you share, like screenshots. Capped at 1920 px wide, 15 fps, 2.5 Mb/s; a share keeps running while the window is hidden. The viewer's **⤢** makes the share full screen (the window itself, so it works in every window mode; Esc, ⤡ or a double-click leaves). **● Record** in the viewer, or Settings → "Record incoming screen shares", writes what you see and hear from them to a `.webm` file in the Videos folder (`~/Movies/P2P Chat` on macOS); switching the setting on during a share starts recording that share at once, and the contact's Sharing pill reads "recorded" for as long as it runs. |
+| **Screen share with voice** | **⇡ Share screen** in the chat header: one click sends the display the window is on, plus your microphone, to that contact. Nothing else opens on your side: the button turns into **■ Stop sharing** and a red **Sharing** pill appears (the sidebar row shows "● live"). The ▾ next to it picks the mode, saved for next time: **one way** (default) sends only yours; **two way** also asks the contact to share theirs through an in-app prompt ("Share my screen" / "Just watch"). The contact sees your screen in a panel at the top of the chat with the messages still usable underneath, with mute, fullscreen, **Talk** (sends their mic back), **Share mine** (turns it two-way at any point) and **End**. Media is WebRTC inside the app's own window (hardware video, Opus audio with echo cancellation, DTLS-SRTP), and the signaling travels over the chat's end-to-end channel, so the media keys are authenticated by the same long-term keys as the messages. Between two home networks it goes through the call server from Settings (coturn on your box, STUN + TURN; it only ever sees encrypted media; "route through the server only" hides your IP from the contact). The capture-blocked chat window is left out of what you share, like screenshots. Capped at 2560 px wide, 30 fps and 8 Mb/s, VP9 first (its screen-content mode keeps text sharp), and the viewer plays frames as they arrive with no jitter cushion; the viewer bar shows resolution, frame rate, bit rate, codec, round-trip time and whether the path is direct or through the call server. A share keeps running while the window is hidden. The viewer's **⤢** makes the share full screen (the window itself, so it works in every window mode; Esc, ⤡ or a double-click leaves). **● Record** in the viewer, or Settings → "Record incoming screen shares", writes what you see and hear from them to a `.webm` file in the Videos folder (`~/Movies/P2P Chat` on macOS); switching the setting on during a share starts recording that share at once, and the contact's Sharing pill reads "recorded" for as long as it runs. **🖱 Control** in the viewer asks the sharer for their mouse and keyboard, the way RustDesk or AnyDesk do: they get a dialog (Allow / Deny) and, once allowed, your pointer, clicks, scrolling and keys on the video act on the display they share (physical keys, so their keyboard layout applies; two clicks are a double click; a held button drags). Their pill reads "controlled" and a **✋ Stop control** button next to it ends it at any moment, as does stopping the share. Events travel on data channels of the same encrypted connection, and a small helper on the sharer's side posts them to the OS: a compiled binary on macOS (needs **Accessibility** access, asked for on the first Allow), `python3` with XTest on Linux (X11 sessions only), PowerShell with `SendInput` on Windows. Nothing is controllable unless the sharer allows it, per share. |
 | **Capture blocked** | `setContentProtection(true)` on every window, default on. macOS: `NSWindow.sharingType = none`. Windows: `SetWindowDisplayAffinity`. Linux: nothing exists, and the UI says so. |
 | **Background app** | `LSUIElement` + `app.dock.hide()` and no `Tray` on macOS (process reports as `UIElement`), `skipTaskbar` + `Tray` on Windows, `globalShortcut` for show/hide, close hides, optional start at login. Not on Linux (see above). |
 | **Themes** | System / Dark / Light in Settings, applied instantly and persisted. One token layer (`ui/theme.css`) holds two complete palettes selected by `<html data-theme>`; every component in `ui/app.css` uses tokens only (no literal colors), `color-scheme` makes native controls match, the window background is set to the theme before first paint, and "System" follows the OS live. `test/theme-contrast.js` checks 66 foreground/background pairs per build against WCAG floors (body text 7:1, secondary and accent text 4.5:1, code syntax colors 4.5:1). |
@@ -228,6 +240,17 @@ macOS 26.2, Apple Silicon, Electron 45.1.0 (bundled Node 24.22.1 on BoringSSL):
   sharer's pill read "Sharing · recorded", back to "Sharing" on stop; the Settings switch turned on during the
   share started a second recording (358 KB) that the switch turned off again; 0 errors in either log
   (test/ui/share.sh, steps 1b-1d).
+
+- **Remote control (0.6.0):** between two dev instances on this Mac, 🖱 Control opened the sharer's dialog naming
+  the asker; Allow turned the viewer's button into "Controlling", the sharer's pill into "Sharing · controlled" with
+  the ✋ button beside it, and started the macOS helper (`ready trusted=1`, display 1920×1200). A pointer move sent
+  through the viewer landed exactly where asked (5 px off and back, read with CGEventGetLocation). ✋ ended it on
+  both sides and stopped the helper; a second request was denied and the viewer was told. Both data channels
+  open, 0 errors in either log (test/ui/share.sh, steps 1e-1f). The Linux helper was run on the box against an
+  Xvfb display: pointer moved to the commanded spot, a held button and a held Shift showed in the X pointer mask,
+  reset and end-of-input cleared both. Not verified here: a click or keystroke landing in another application's
+  window (the harness does not inject into a live desktop), and the Windows helper beyond starting and compiling
+  its SendInput shim.
 
 ### Two bugs only the real app caught
 
@@ -289,9 +312,14 @@ Windows device names (`NUL`, `COM1`…) as blob file names, a macOS permission g
 - **Screen share**: one session at a time; the microphone, not system audio (Electron captures system audio on
   Windows only); on Linux the chat window is part of what you share (no capture blocking there); the call
   server's credential is inside the app, so anyone who extracts it can use that server's bandwidth (capped at
-  6 Mb/s per session, private addresses refused). Not a call feature yet: no ringing, no camera, no group.
+  20 Mb/s per session, private addresses refused). Not a call feature yet: no ringing, no camera, no group.
   Recordings are plain `.webm` files outside the vault; they hold the contact's screen and voice (not your own
   talk-back) and stop when their screen stops.
+- **Remote control** needs, on the sharer's side, Accessibility access on macOS, an X11 session with `python3` on
+  Linux (Wayland is refused; the deb depends on `python3` and `libxtst6`, the AppImage assumes them), and PowerShell
+  on Windows. Keys are sent as physical keys, so what a key types follows the sharer's layout; shortcuts the viewer's
+  OS keeps for itself (⌘-Tab, ⌘-Q, Alt-Tab) never reach the sharer, and Esc leaves the viewer's full screen only
+  while control is off. No clipboard sync, no file transfer, no system audio.
 - **Screenshots are pulled whole, without backpressure**: 8 MB cap per image, parts written to the socket in one go,
   one image at a time per peer, one part in flight, at most 40 parts/s per peer. Auto-download stops at 512 MB of
   images per contact (a Download button fetches past it). On Wayland the capture goes through the desktop portal,
