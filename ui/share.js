@@ -33,6 +33,7 @@
   const cur = () => map.get(S.current) || null;                                             // the session of the open chat
   const pick = (pub) => map.get(pub) || cur() || map.values().next().value || null;         // ... else the oldest
   const giving = (state) => [...map.values()].find((x) => x.ctl.give === state) || null;    // the session that asked for ('asked') or has ('on') control of my screen
+  let backFor = null;                                                                       // the session whose "share yours too" prompt is on screen
 
   // Synchronous: the slot is taken in the task that decides to open it, so two frames, or a frame and
   // a click, never open two sessions with one contact. The peer connection needs the ICE servers from
@@ -220,6 +221,7 @@
     if (sess.ctl.give === 'on') window.api.controlRevoke().catch(() => {});
     clearTimeout(sess.ctl.flush); clearTimeout(sess.ctl.askTimer);
     if (!$('mControl').classList.contains('hidden')) window.closeModal();
+    if (backFor === sess) { backFor = null; if (!$('mShareBack').classList.contains('hidden')) window.closeModal(); }   // the prompt names this contact: it must not outlive the session
     $('viewerVideo').classList.remove('ctl'); $('viewerVideo').removeEventListener(K.tune.MOVE_EV, onMove);
     if (sess.rec) stopRecording(sess);                      // before their tracks end, so the last piece is whole
     dropTrack(sess, 'screen'); dropTrack(sess, 'mic');
@@ -287,7 +289,7 @@
     if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
     if (ev.screen && !was) { attachRemote(sess); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
     if (!ev.screen && (sess.ctl.take || sess.ctl.asked)) { stopTaking(sess); clearTimeout(sess.ctl.askTimer); sess.ctl.asked = false; }
-    if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
+    if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; backFor = sess; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
     if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
     render(); renderContacts();
   }
@@ -545,7 +547,8 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && theater && !keysGoRemote()) { e.stopPropagation(); setFull(false); } }, true);
   $('viewerRec').onclick = () => { const sess = cur(); if (!sess) return; sess.recWanted = !sess.rec; syncRecording(sess); renderRec(sess); };
   $('viewerEnd').onclick = () => { const sess = cur(); if (sess) end(sess); };
-  $('shareBackYes').onclick = () => { window.closeModal(); const sess = pick(); if (sess) start(sess.pub, 'two'); };
+  // the prompt belongs to the session that asked: Yes shares with that contact or with nobody
+  $('shareBackYes').onclick = () => { window.closeModal(); const sess = backFor; backFor = null; if (sess && !sess.closed) start(sess.pub, 'two'); };
   $('shareBackNo').onclick = () => window.closeModal();
   // remote control: the viewer's input on the video goes to their machine while it is on
   $('viewerCtl').onclick = () => { const sess = cur(); if (sess) askControl(sess); };
