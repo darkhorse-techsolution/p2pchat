@@ -153,10 +153,12 @@
     try { screen = await navigator.mediaDevices.getDisplayMedia(K.tune.displayConstraints()); }
     catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); if (!sess.remote.screen && !sess.remote.mic) close(sess, 'capture'); return; }
     const track = screen.getVideoTracks()[0];
-    if (sess.closed) { track.stop(); return; }              // the session ended while the capture was starting: nothing may keep the screen
+    // The session ended while the capture was starting, or a second click got its capture in first:
+    // a track the session does not hold is one nothing would ever stop.
+    if (sess.closed || sess.screenTrack) { track.stop(); return; }
     track.contentHint = K.tune.hint(sess.ctl.give === 'on');
     await K.tune.capture(track);
-    if (sess.closed) { track.stop(); return; }
+    if (sess.closed || sess.screenTrack) { track.stop(); return; }
     track.onended = () => { if (!sess.closed && sess.screenTrack === track) stopSharing(sess); }; // the OS ended the capture
     sess.screenTrack = track; sess.local.addTrack(track);
     openChannels(sess);                                     // in the same task as addTrack: one negotiation covers both
@@ -177,7 +179,7 @@
     try {
       const mic = await navigator.mediaDevices.getUserMedia(K.tune.micConstraints());
       const t = mic.getAudioTracks()[0];
-      if (sess.closed) { t.stop(); return false; }
+      if (sess.closed || sess.micTrack) { t.stop(); return !!sess.micTrack; }   // closed meanwhile, or an overlapping call attached its microphone first: this one would stay open for good
       sess.micTrack = t; sess.local.addTrack(t); sess.micSender = sess.pc.addTrack(t, K.tune.streamFor(sess, 'audio'));
       return true;
     } catch (e) { if (!quiet) toast(`Microphone: ${e.message}`, 'err'); return false; }
