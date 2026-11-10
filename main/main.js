@@ -40,9 +40,11 @@ process.on('uncaughtException', (e) => {
 });
 process.on('unhandledRejection', (e) => { log.error('unhandledRejection', e); });
 
-// Super = the Windows key on Windows/Linux, Command on macOS. Win+Alt+X / Cmd+Opt+X.
-const DEFAULT_HOTKEY = 'Super+Alt+X';
-const DEFAULT_MODE_HOTKEY = 'Super+Alt+Z';   // cycles Overlap -> On top -> Overlay; the only way out of Overlay
+// Super = the Windows key on Windows/Linux, Command on macOS. Ctrl+Win+X / Ctrl+Cmd+X.
+const DEFAULT_HOTKEY = 'Control+Super+X';
+const DEFAULT_MODE_HOTKEY = 'Control+Super+Backspace';   // cycles Overlap -> On top -> Overlay; the only way out of Overlay
+const DEFAULT_FULL_HOTKEY = 'Control+Super+Return';      // full screen for an incoming share, also while controlling it
+const OLD_DEFAULTS = { hotkey: 'Super+Alt+X', modeHotkey: 'Super+Alt+Z' };   // 0.6 and earlier; stored copies move to the new keys at boot
 const MODES = ['overlap', 'top', 'overlay'];
 // Your own relay. New installs use it until the user changes it in Settings; invites carry it.
 const DEFAULT_RELAY = 'relay://49.12.170.6:4433/eEo_7e-gv8vacjh-EGO7ZcwYNSrALyQU1kDFruoFlyU';
@@ -133,7 +135,7 @@ async function loadVaultKey(dir) {
 }
 
 let engine = null, store = null, keyInfo = null, win = null, tray = null, quitting = false, hotkeyOk = false, modeHotkeyOk = false;
-const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false });
+const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false });
 // Settings added after a vault was created are read with defaults (an existing vault lacks the keys).
 const turnCfg = () => { const st = settings(); return { host: st.turn ?? DEFAULT_TURN.host, user: st.turnUser ?? DEFAULT_TURN.user, pass: st.turnPass ?? DEFAULT_TURN.pass }; };
 function iceConfig() {
@@ -276,12 +278,13 @@ function toggleWindow() {
   (win.isVisible() && win.isFocused()) ? hideWindow() : showWindow();
 }
 
-// Two global shortcuts: `hotkey` shows/hides, `modeHotkey` cycles the window mode.
-const SHORTCUTS = { hotkey: () => toggleWindow(), modeHotkey: () => cycleMode() };
+// Three global shortcuts: `hotkey` shows/hides, `modeHotkey` cycles the window mode, `fullHotkey`
+// toggles full screen for an incoming share (the renderer decides; nothing happens without one).
+const SHORTCUTS = { hotkey: () => toggleWindow(), modeHotkey: () => cycleMode(), fullHotkey: () => { if (win && !win.isDestroyed() && win.isVisible()) push('fullHotkey', {}); } };
 function registerShortcut(kind, accel) {
   const current = settings()[kind];
-  const other = kind === 'hotkey' ? settings().modeHotkey : settings().hotkey;
-  if (accel && accel === other) return { ok: false, error: 'already used by the other hotkey', hotkey: current };
+  const others = Object.keys(SHORTCUTS).filter((k) => k !== kind).map((k) => settings()[k]);
+  if (accel && others.includes(accel)) return { ok: false, error: 'already used by another hotkey', hotkey: current };
   if (current) globalShortcut.unregister(current);
   let ok = false, error = '';
   try { ok = globalShortcut.register(accel, SHORTCUTS[kind]); if (!ok) error = 'that combination is taken by another app or the OS'; }
@@ -302,6 +305,7 @@ function trayMenu() {
   return Menu.buildFromTemplate([
     { label: 'Show / Hide', accelerator: settings().hotkey, click: toggleWindow },
     { label: 'Next Window Mode', accelerator: settings().modeHotkey, click: cycleMode },
+    { label: 'Full Screen Share', accelerator: settings().fullHotkey, click: SHORTCUTS.fullHotkey },
     { type: 'separator' },
     { label: 'Block Screenshots & Recording', type: 'checkbox', checked: protectionOn, enabled: captureSupport().supported, click: (i) => setProtection(i.checked) },
     { label: 'Copy My Invite', click: () => clipboard.writeText(engine.invite()) },
@@ -384,7 +388,7 @@ handle('state', () => ({
   contacts: store.contacts().map(contactView),
   protection: protectionOn, capture: captureSupport(), platform: process.platform,
   settings: settings(), relay: engine.relayStatus(), vaultSecure: keyInfo.secure, vaultPath: store.file,
-  backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY }, turn: turnCfg(),
+  backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
   recordingsDir: recordingsDir(), control: control.status(),
@@ -529,6 +533,7 @@ handle('wipeConversation', (_e, pub) => { store.wipeConversation(pub); return tr
 handle('protection', (_e, v) => setProtection(v));
 handle('setHotkey', (_e, accel) => registerHotkey(String(accel || '')));
 handle('setModeHotkey', (_e, accel) => registerShortcut('modeHotkey', String(accel || '')));
+handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(accel || '')));
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
@@ -676,6 +681,8 @@ async function boot() {
     if (isWin) tray.on('click', toggleWindow);
   }
 
+  for (const k of Object.keys(OLD_DEFAULTS)) if (settings()[k] === OLD_DEFAULTS[k]) { settings()[k] = k === 'hotkey' ? DEFAULT_HOTKEY : DEFAULT_MODE_HOTKEY; store.saveSoon(); log.info(k, 'moved from the old default to', settings()[k]); }
+  if (!settings().fullHotkey) settings().fullHotkey = DEFAULT_FULL_HOTKEY;
   let r = registerHotkey(settings().hotkey || DEFAULT_HOTKEY);
   if (!r.ok && settings().hotkey !== DEFAULT_HOTKEY) r = registerHotkey(DEFAULT_HOTKEY); // a custom key that stopped working falls back
   if (!r.ok) { showWindow(); push('error', { message: `The show/hide hotkey (${settings().hotkey}) could not be registered: ${r.error}. Pick another in Settings; until then the window stays open.` }); }
@@ -683,6 +690,9 @@ async function boot() {
   let rm = registerShortcut('modeHotkey', settings().modeHotkey || DEFAULT_MODE_HOTKEY);
   if (!rm.ok && settings().modeHotkey !== DEFAULT_MODE_HOTKEY) rm = registerShortcut('modeHotkey', DEFAULT_MODE_HOTKEY);
   modeHotkeyOk = rm.ok;
+  let rf = registerShortcut('fullHotkey', settings().fullHotkey || DEFAULT_FULL_HOTKEY);
+  if (!rf.ok && settings().fullHotkey !== DEFAULT_FULL_HOTKEY) rf = registerShortcut('fullHotkey', DEFAULT_FULL_HOTKEY);
+  if (!rf.ok) { log.error('full-screen hotkey unavailable', rf.error); push('error', { message: `The full-screen hotkey (${settings().fullHotkey}) could not be registered: ${rf.error}. Pick another in Settings.` }); }
   if (!rm.ok) { log.error('mode hotkey unavailable', rm.error); if (settings().mode === 'overlay') { settings().mode = 'overlap'; store.saveSoon(); } push('error', { message: `The window-mode hotkey (${settings().modeHotkey}) could not be registered: ${rm.error}. Overlay mode is disabled until you pick another key in Settings.` }); }
   applyMode(settings().mode || 'overlap');
 }

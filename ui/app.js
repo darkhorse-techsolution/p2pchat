@@ -64,13 +64,13 @@ $('btnNav').onclick = toggleSidebar; $('btnNav2').onclick = toggleSidebar;
 // ---------- modals ----------
 let openModal = null;
 function show(id) { openModal = id; $('backdrop').classList.remove('hidden'); $(id).classList.remove('hidden'); const f = $(id).querySelector('input:not([readonly]),textarea:not([readonly])'); if (f) setTimeout(() => f.focus(), 30); }
-function close() { if (!openModal) return; $(openModal).classList.add('hidden'); $('backdrop').classList.add('hidden'); openModal = null; S.hotkeyListening = false; $('setHotkey').classList.remove('listening'); $('setModeHotkey').classList.remove('listening'); $('input').focus(); }
+function close() { if (!openModal) return; $(openModal).classList.add('hidden'); $('backdrop').classList.add('hidden'); openModal = null; S.hotkeyListening = false; $('setHotkey').classList.remove('listening'); $('setModeHotkey').classList.remove('listening'); $('setFullHotkey').classList.remove('listening'); $('input').focus(); }
 window.closeModal = close; // share.js has its own close(); it reaches the modal one through this name
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = close));
 $('backdrop').onclick = close;
 
 // ---------- sidebar ----------
-const prettyHotkey = (a) => { const mac = window.api.platform === 'darwin'; const m = { CommandOrControl: mac ? '⌘' : 'Ctrl', Super: mac ? '⌘' : 'Win', Meta: mac ? '⌘' : 'Win', Command: '⌘', Control: mac ? '⌃' : 'Ctrl', Alt: mac ? '⌥' : 'Alt', Shift: mac ? '⇧' : 'Shift', Space: mac ? 'Space' : 'Space' }; return String(a || '').split('+').map((k) => m[k] || k).join(mac ? '' : '+'); };
+const prettyHotkey = (a) => { const mac = window.api.platform === 'darwin'; const m = { CommandOrControl: mac ? '⌘' : 'Ctrl', Super: mac ? '⌘' : 'Win', Meta: mac ? '⌘' : 'Win', Command: '⌘', Control: mac ? '⌃' : 'Ctrl', Alt: mac ? '⌥' : 'Alt', Shift: mac ? '⇧' : 'Shift', Space: mac ? 'Space' : 'Space', Return: mac ? '↩' : 'Enter', Backspace: mac ? '⌫' : 'Backspace' }; return String(a || '').split('+').map((k) => m[k] || k).join(mac ? '' : '+'); };
 function renderMe() {
   $('meName').textContent = S.me.name || 'Unnamed';
   $('meSub').textContent = `${S.me.host}:${S.me.port}`;
@@ -310,7 +310,7 @@ $('infoRemove').onclick = async () => { if (!confirm('Remove this contact and de
 
 // ---------- settings ----------
 function renderSettings() {
-  $('setName').value = S.me.name || ''; $('setHotkey').value = prettyHotkey(S.settings.hotkey || ''); $('setModeHotkey').value = prettyHotkey(S.settings.modeHotkey || ''); renderMode(S.mode);
+  $('setName').value = S.me.name || ''; $('setHotkey').value = prettyHotkey(S.settings.hotkey || ''); $('setModeHotkey').value = prettyHotkey(S.settings.modeHotkey || ''); $('setFullHotkey').value = prettyHotkey(S.settings.fullHotkey || ''); renderMode(S.mode);
   const hk = document.querySelector('#setHotkey').parentElement.nextElementSibling; if (hk) hk.textContent = S.backgroundApp ? (window.api.platform === 'darwin' ? 'No Dock icon and no menu-bar icon: this hotkey is the only way to bring the window back (or open the app again from Launchpad). Closing the window hides it.' : 'No taskbar button: this hotkey and the tray icon bring the window back.') : 'On Linux the window stays in the taskbar and the hotkey works on X11 sessions only.'; $('setRelay').value = S.settings.relay || ''; renderRelay(S.relay || 'off');
   applyTheme(S.settings.theme || 'system');
   $('setProtection').checked = S.protection; $('setProtection').disabled = !S.capture.supported; $('setProtectionHow').textContent = S.capture.how;
@@ -342,10 +342,11 @@ $('openRecordings').onclick = () => window.api.openRecordings();
 $('setAutostart').onchange = async (e) => { S.settings.autostart = await window.api.setAutostart(e.target.checked); };
 $('setDiscovery').onchange = async (e) => { S.discovery = await window.api.discovery(e.target.checked); S.settings.discovery = S.discovery; };
 $('btnQuit').onclick = () => { if (confirm('Quit P2P Chat? Contacts will see you offline and queue messages for you.')) window.api.quit(); };
-const HK = { hotkey: { field: 'setHotkey', err: 'hotkeyErr', api: (a) => window.api.setHotkey(a) }, modeHotkey: { field: 'setModeHotkey', err: 'modeHotkeyErr', api: (a) => window.api.setModeHotkey(a) } };
+const HK = { hotkey: { field: 'setHotkey', err: 'hotkeyErr', api: (a) => window.api.setHotkey(a) }, modeHotkey: { field: 'setModeHotkey', err: 'modeHotkeyErr', api: (a) => window.api.setModeHotkey(a) }, fullHotkey: { field: 'setFullHotkey', err: 'fullHotkeyErr', api: (a) => window.api.setFullHotkey(a) } };
 for (const k of Object.keys(HK)) $(HK[k].field).onclick = () => { S.hotkeyListening = k; $(HK[k].field).classList.add('listening'); $(HK[k].field).value = 'press keys…'; $(HK[k].err).classList.add('hidden'); };
-$('hotkeyReset').onclick = () => applyHotkey(S.defaults?.hotkey || 'Super+Alt+X', 'hotkey');
-$('modeHotkeyReset').onclick = () => applyHotkey(S.defaults?.modeHotkey || 'Super+Alt+Z', 'modeHotkey');
+$('hotkeyReset').onclick = () => applyHotkey(S.defaults?.hotkey || 'Control+Super+X', 'hotkey');
+$('modeHotkeyReset').onclick = () => applyHotkey(S.defaults?.modeHotkey || 'Control+Super+Backspace', 'modeHotkey');
+$('fullHotkeyReset').onclick = () => applyHotkey(S.defaults?.fullHotkey || 'Control+Super+Return', 'fullHotkey');
 const KEYMAP = { ' ': 'Space', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Escape: 'Esc', Backspace: 'Backspace', Delete: 'Delete', Tab: 'Tab', Enter: 'Return', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown' };
 document.addEventListener('keydown', (e) => {
   if (!S.hotkeyListening) return;
@@ -362,7 +363,7 @@ async function applyHotkey(accel, which = 'hotkey') {
   const h = HK[which]; S.hotkeyListening = false; $(h.field).classList.remove('listening');
   const r = await h.api(accel);
   $(h.field).value = prettyHotkey(r.hotkey); S.settings[which] = r.hotkey;
-  if (r.ok) { $(h.err).classList.add('hidden'); toast(`${which === 'hotkey' ? 'Show/hide' : 'Window-mode'} hotkey set to ${prettyHotkey(r.hotkey)}`, 'ok'); } else { $(h.err).textContent = `Could not use ${accel}: ${r.error}`; $(h.err).classList.remove('hidden'); }
+  if (r.ok) { $(h.err).classList.add('hidden'); toast(`${which === 'hotkey' ? 'Show/hide' : which === 'modeHotkey' ? 'Window-mode' : 'Full-screen'} hotkey set to ${prettyHotkey(r.hotkey)}`, 'ok'); } else { $(h.err).textContent = `Could not use ${accel}: ${r.error}`; $(h.err).classList.remove('hidden'); }
 }
 
 // ---------- shield ----------
@@ -444,6 +445,7 @@ window.api.onEvent(async (ev) => {
     case 'protection': S.capture = { supported: ev.supported, how: ev.how }; renderShield(ev.on); break;
     case 'relay': renderRelay(ev.status); if (ev.status === 'up') refreshState(); break;
     case 'opacity': renderOpacity(ev.opacity); break;
+    case 'fullHotkey': if (window.Share && window.Share.active()) window.Share.setFull(); break;
     case 'mode': renderMode(ev.mode); toast(`${MODE_TEXT[ev.mode]}. ${prettyHotkey(ev.hotkey)} cycles modes.`, ev.mode === 'overlay' ? '' : 'ok'); break;
     case 'settings': S.settings = { ...S.settings, ...ev }; if (openModal === 'mSettings') renderSettings(); if (window.Share) window.Share.onSettings(); break;
     case 'fullscreen': if (window.Share) window.Share.onFullscreen(ev); break;

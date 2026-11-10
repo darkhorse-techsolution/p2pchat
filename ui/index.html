@@ -150,6 +150,10 @@
     <div class="row"><input id="setModeHotkey" readonly placeholder="click, then press keys"><button id="modeHotkeyReset" class="ghost">Reset</button></div>
     <div class="muted small">Cycles Overlap → On top → Overlay. In Overlay the mouse goes through the window, so this key is the way back.</div>
     <div class="err hidden" id="modeHotkeyErr"></div>
+    <label>Full-screen hotkey</label>
+    <div class="row"><input id="setFullHotkey" readonly placeholder="click, then press keys"><button id="fullHotkeyReset" class="ghost">Reset</button></div>
+    <div class="muted small">Full screen on and off for an incoming share, also while you control their screen (when Esc and clicks go to them).</div>
+    <div class="err hidden" id="fullHotkeyErr"></div>
     <label>Relay (for contacts outside your network)</label>
     <div class="row"><input id="setRelay" placeholder="relay://host:port/key" spellcheck="false"><span class="pill" id="relayPill">off</span></div>
     <div class="muted small">Without a relay, only people on your local network can reach you. The relay sees random addresses and ciphertext, never names, keys or messages. Your invites carry it, so contacts pick it up automatically.</div>
