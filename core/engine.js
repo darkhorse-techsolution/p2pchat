@@ -73,7 +73,7 @@ function sanitizeShare(m) {
       out.candidate = { candidate: c.candidate, sdpMid: str(c.sdpMid, 64) ?? null, sdpMLineIndex: Number.isInteger(c.sdpMLineIndex) ? c.sdpMLineIndex : null, usernameFragment: str(c.usernameFragment, 256) ?? null };
     }
   } else if (m.op === 'state') {
-    out.screen = !!m.screen; out.mic = !!m.mic; out.mode = m.mode === 'two' ? 'two' : 'one';
+    out.screen = !!m.screen; out.mic = !!m.mic; out.mode = m.mode === 'two' ? 'two' : 'one'; out.rec = !!m.rec;
   }
   return out;
 }

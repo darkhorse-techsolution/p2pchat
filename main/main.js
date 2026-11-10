@@ -132,7 +132,7 @@ async function loadVaultKey(dir) {
 }
 
 let engine = null, store = null, keyInfo = null, win = null, tray = null, quitting = false, hotkeyOk = false, modeHotkeyOk = false;
-const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false });
+const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false });
 // Settings added after a vault was created are read with defaults (an existing vault lacks the keys).
 const turnCfg = () => { const st = settings(); return { host: st.turn ?? DEFAULT_TURN.host, user: st.turnUser ?? DEFAULT_TURN.user, pass: st.turnPass ?? DEFAULT_TURN.pass }; };
 function iceConfig() {
@@ -268,7 +268,7 @@ function showWindow() {
 
   push('shown');
 }
-function hideWindow() { log.info('hideWindow', new Error().stack.split('\n')[2]?.trim() || ''); if (win && !win.isDestroyed()) win.hide(); }
+function hideWindow() { log.info('hideWindow', new Error().stack.split('\n')[2]?.trim() || ''); if (win && !win.isDestroyed()) { setViewerFullscreen(false); win.hide(); } }
 function toggleWindow() {
   if (!win) return;
   if (isOverlay()) { win.isVisible() ? hideWindow() : showWindow(); return; } // never focused in overlay, so visibility alone decides
@@ -383,8 +383,9 @@ handle('state', () => ({
   protection: protectionOn, capture: captureSupport(), platform: process.platform,
   settings: settings(), relay: engine.relayStatus(), vaultSecure: keyInfo.secure, vaultPath: store.file,
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY }, turn: turnCfg(),
-  windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable() } : null,
+  windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
+  recordingsDir: recordingsDir(),
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -431,6 +432,60 @@ handle('fetchImage', (_e, pub, id) => { engine.fetchImage(pub, String(id || ''))
 handle('share', (_e, pub, payload) => engine.sendShare(String(pub || ''), payload));
 handle('iceConfig', () => iceConfig());
 handle('micPermission', async () => { if (!isMac) return true; try { return await systemPreferences.askForMediaAccess('microphone'); } catch { return false; } });
+// --- share viewer: full screen and recording --------------------------------------
+// Full screen is the window itself, asked for by the viewer: simple fullscreen on macOS (no
+// Space switch, so it works for a Dock-less app and in every window mode), setFullScreen
+// elsewhere. Element fullscreen is not used (every page permission stays refused).
+function isViewerFullscreen() { return !!win && !win.isDestroyed() && (win.isFullScreen() || (isMac && win.isSimpleFullScreen())); }
+function setViewerFullscreen(on) {
+  if (!win || win.isDestroyed()) return false;
+  on = !!on;
+  if (on !== isViewerFullscreen()) { if (isMac) win.setSimpleFullScreen(on); else win.setFullScreen(on); push('fullscreen', { on }); }
+  return on;
+}
+handle('fullscreen', (_e, on) => setViewerFullscreen(on));
+// Recording an incoming share: the renderer's MediaRecorder streams WebM pieces here and they
+// are appended, in order, to a plain file in the Videos folder. Deliberately not in the vault:
+// a recording is for playing in any player. Files are created exclusively and never reused.
+const recordings = new Map(); const recordedFiles = new Set(); let recSeq = 0;
+const REC_CHUNK_MAX = 16 * 1024 * 1024;
+function recordingsDir() { let base; try { base = app.getPath('videos'); } catch { base = app.getPath('home'); } return path.join(base, 'P2P Chat'); }
+handle('recordStart', (_e, pub) => {
+  const c = store.contact(String(pub || '')); if (!c) throw new Error('unknown contact');
+  if (recordings.size >= 2) throw new Error('a recording is already running');
+  const dir = recordingsDir(); fs.mkdirSync(dir, { recursive: true });
+  const d = new Date(), two = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}-${two(d.getMinutes())}-${two(d.getSeconds())}`;
+  const name = String(c.name || '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 40) || 'contact';
+  let file, fd;
+  for (let i = 0; ; i++) {
+    file = path.join(dir, `${name} ${stamp}${i ? ` (${i})` : ''}.webm`);
+    try { fd = fs.openSync(file, 'wx', 0o600); break; } catch (e) { if (e.code !== 'EEXIST' || i > 20) throw new Error(`cannot create the recording: ${e.code || e.message}`); }
+  }
+  const id = String(++recSeq); recordings.set(id, { fd, file, bytes: 0 }); log.info('recording start', file);
+  return { id, file };
+});
+handle('recordChunk', (_e, id, data) => {
+  const r = recordings.get(String(id)); if (!r) throw new Error('no such recording');
+  const buf = Buffer.isBuffer(data) ? data : data instanceof Uint8Array ? Buffer.from(data.buffer, data.byteOffset, data.byteLength) : data instanceof ArrayBuffer ? Buffer.from(data) : null;
+  if (!buf || !buf.length || buf.length > REC_CHUNK_MAX) throw new Error('bad chunk');
+  try { fs.writeSync(r.fd, buf); r.bytes += buf.length; }
+  catch (e) { recordings.delete(String(id)); try { fs.closeSync(r.fd); } catch {} log.error('recording write', r.file, e); throw new Error(`cannot write the recording: ${e.code || e.message}`); }
+  return r.bytes;
+});
+handle('recordStop', (_e, id) => {
+  const r = recordings.get(String(id)); if (!r) return null;
+  recordings.delete(String(id));
+  try { fs.fsyncSync(r.fd); } catch {} try { fs.closeSync(r.fd); } catch {}
+  if (r.bytes < 100) { try { fs.unlinkSync(r.file); } catch {} return null; }   // nothing arrived: no empty file left behind
+  recordedFiles.add(r.file); log.info('recording saved', r.file, r.bytes);
+  return { file: r.file, bytes: r.bytes };
+});
+handle('openRecordings', (_e, file) => {
+  const f = String(file || '');
+  if (f && recordedFiles.has(f)) { shell.showItemInFolder(f); return true; }
+  const dir = recordingsDir(); fs.mkdirSync(dir, { recursive: true }); shell.openPath(dir); return true;
+});
 handle('openScreenSettings', () => { if (!isMac) return false; shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'); return true; });
 handle('copyImage', async (_e, pub, id) => {
   const data = store.blob(pub, id); if (!data) throw new Error('image not available');
@@ -461,7 +516,7 @@ handle('setModeHotkey', (_e, accel) => registerShortcut('modeHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
 handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
 // Dev builds only: lets the UI test suite resize the real window. Not registered in packaged builds.
@@ -590,6 +645,7 @@ async function boot() {
   if (isMac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // once, before the first show
   win.on('close', (e) => { if (!quitting && BACKGROUND_APP && (hotkeyOk || tray)) { e.preventDefault(); hideWindow(); } else { quitting = true; } });
   win.on('hide', () => { log.info('window hide event'); push('hidden'); });
+  win.on('leave-full-screen', () => push('fullscreen', { on: false }));   // the OS took it out (green button, Esc); the viewer follows
   win.on('show', () => { log.info('window show event'); if (isLinux && clampOpacity(settings().opacity) < 0.995) linuxSetOpacity(clampOpacity(settings().opacity)); });
   win.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
   win.once('ready-to-show', () => { if (!process.argv.includes('--start-hidden')) showWindow(); });

@@ -319,7 +319,7 @@ function renderSettings() {
   $('setPopups').checked = S.settings.popups !== false; $('setPopupText').checked = S.settings.popupText !== false;
   $('setCodeWrap').checked = S.prefs.codeWrap !== false; $('setCodeCollapse').checked = S.prefs.codeCollapse !== false;
   document.querySelectorAll('#shareModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.shareMode || 'one')));
-  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly;
+  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setRecordShares').checked = !!S.settings.recordShares; $('recordingsDir').textContent = S.recordingsDir || '';
   $('aboutLine').textContent = `P2P Chat ${S.version}${S.packaged ? '' : ' (dev)'} · log: ${S.logPath || 'n/a'}`;
   const v = $('vaultInfo'); v.className = 'vault ' + (S.vaultSecure ? 'ok' : 'warn');
   v.textContent = (S.vaultSecure ? 'Vault key held by the OS keychain · ' : S.packaged ? 'Vault key stored unprotected (no keychain available) · ' : 'Dev run: vault key is a plain file, Keychain not used · ') + S.vaultPath;
@@ -337,6 +337,8 @@ document.querySelectorAll('#shareModeSeg button').forEach((b) => (b.onclick = as
 const saveTurn = async () => { S.turn = { host: await window.api.setPref('turn', $('setTurn').value), user: await window.api.setPref('turnUser', $('setTurnUser').value), pass: await window.api.setPref('turnPass', $('setTurnPass').value) }; toast('Call server saved. It applies to the next share.', 'ok'); };
 $('setTurn').onchange = saveTurn; $('setTurnUser').onchange = saveTurn; $('setTurnPass').onchange = saveTurn;
 $('setCallsRelayOnly').onchange = async (e) => { S.settings.callsRelayOnly = await window.api.setPref('callsRelayOnly', e.target.checked); };
+$('setRecordShares').onchange = async (e) => { S.settings.recordShares = await window.api.setPref('recordShares', e.target.checked); if (window.Share) window.Share.onSettings(); };
+$('openRecordings').onclick = () => window.api.openRecordings();
 $('setAutostart').onchange = async (e) => { S.settings.autostart = await window.api.setAutostart(e.target.checked); };
 $('setDiscovery').onchange = async (e) => { S.discovery = await window.api.discovery(e.target.checked); S.settings.discovery = S.discovery; };
 $('btnQuit').onclick = () => { if (confirm('Quit P2P Chat? Contacts will see you offline and queue messages for you.')) window.api.quit(); };
@@ -400,7 +402,7 @@ $('shield').onclick = async () => renderShield(await window.api.protection(!S.pr
 // ---------- state + events ----------
 async function refreshState() {
   const s = await window.api.state();
-  S.me = s.me; S.contacts = s.contacts; S.settings = s.settings; S.capture = s.capture; S.vaultSecure = s.vaultSecure; S.vaultPath = s.vaultPath; S.discovery = !!s.settings.discovery;
+  S.me = s.me; S.contacts = s.contacts; S.settings = s.settings; S.capture = s.capture; S.vaultSecure = s.vaultSecure; S.vaultPath = s.vaultPath; S.recordingsDir = s.recordingsDir; S.discovery = !!s.settings.discovery;
   S.autostartSupported = s.autostartSupported; S.version = s.version; S.packaged = s.packaged; S.logPath = s.logPath; S.backgroundApp = s.backgroundApp; S.defaults = s.defaults; S.turn = s.turn; renderMode(s.mode);
   S.prefs = { sidebarWidth: s.settings.sidebarWidth ?? 300, sidebarCollapsed: !!s.settings.sidebarCollapsed, codeWrap: s.settings.codeWrap !== false, codeCollapse: s.settings.codeCollapse !== false }; applyLayout();
   applyTheme(s.settings.theme || 'system');
@@ -443,7 +445,8 @@ window.api.onEvent(async (ev) => {
     case 'relay': renderRelay(ev.status); if (ev.status === 'up') refreshState(); break;
     case 'opacity': renderOpacity(ev.opacity); break;
     case 'mode': renderMode(ev.mode); toast(`${MODE_TEXT[ev.mode]}. ${prettyHotkey(ev.hotkey)} cycles modes.`, ev.mode === 'overlay' ? '' : 'ok'); break;
-    case 'settings': S.settings = { ...S.settings, ...ev }; if (openModal === 'mSettings') renderSettings(); break;
+    case 'settings': S.settings = { ...S.settings, ...ev }; if (openModal === 'mSettings') renderSettings(); if (window.Share) window.Share.onSettings(); break;
+    case 'fullscreen': if (window.Share) window.Share.onFullscreen(ev); break;
     case 'shown': input.focus(); if (S.current && (contact(S.current)?.unread || 0) > 0) select(S.current); break;
   }
 });

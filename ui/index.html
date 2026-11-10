@@ -74,7 +74,8 @@
           <button id="viewerMute" title="Mute their sound">🔊</button>
           <button id="viewerTalk" title="Send your microphone so they hear you">🎙 Talk</button>
           <button id="viewerShareBack" title="Share your screen too">Share mine</button>
-          <button id="viewerFull" title="Fullscreen (Esc leaves)">⤢</button>
+          <button id="viewerRec" class="rec" title="Record what you see and hear from them to a file">● Record</button>
+          <button id="viewerFull" title="Full screen (Esc leaves)">⤢</button>
           <button class="danger" id="viewerEnd" title="End the screen share for both">End</button>
         </div>
       </section>
@@ -161,6 +162,9 @@
     <div class="row"><input id="setTurn" placeholder="call server host:port" spellcheck="false"><input id="setTurnUser" placeholder="user" spellcheck="false" style="max-width:120px"><input id="setTurnPass" type="password" placeholder="password" style="max-width:150px"></div>
     <div class="muted small">The call server (STUN/TURN) passes the share between two home networks that cannot reach each other directly. It only sees encrypted media. Leave the host empty to allow direct and local-network shares only.</div>
     <label class="check"><input type="checkbox" id="setCallsRelayOnly"> Route shares through the call server only (hides your IP address from the contact)</label>
+    <label class="check"><input type="checkbox" id="setRecordShares"> Record incoming screen shares to a file (their screen and voice)</label>
+    <div class="row"><button id="openRecordings">Open recordings folder</button><span class="muted small" id="recordingsDir"></span></div>
+    <div class="muted small">Starts when a contact's screen arrives, also for a share already running when you switch this on; ● Record in the viewer does the same for one share. Plain .webm files (VP9 + Opus) outside the encrypted vault, playable anywhere. The contact's app shows that they are being recorded.</div>
     <label>Code blocks</label>
     <label class="check"><input type="checkbox" id="setCodeWrap"> Wrap long lines (no sideways scrolling)</label>
     <label class="check"><input type="checkbox" id="setCodeCollapse"> Collapse blocks longer than 18 lines, with a "Show all" button</label>

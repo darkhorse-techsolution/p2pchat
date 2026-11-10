@@ -1,7 +1,7 @@
 {
   "name": "p2pchat",
   "productName": "P2P Chat",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Peer-to-peer, end-to-end encrypted chat with no user identifiers, persistent encrypted history, and a window that cannot be screen-captured",
   "main": "main/main.js",
   "license": "AGPL-3.0",

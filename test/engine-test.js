@@ -249,8 +249,8 @@ async function boot(who, opts = {}) {
   alice.sendShare(B, { op: 'sdp', sid: 'abc', description: { type: 'offer', sdp: 'v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n' } });
   alice.sendShare(B, { op: 'ice', sid: 'abc', candidate: { candidate: 'candidate:1 1 udp 2 127.0.0.1 5000 typ host', sdpMid: '0', sdpMLineIndex: 0, usernameFragment: 'u' } });
   alice.sendShare(B, { op: 'ice', sid: 'abc', candidate: null });
-  alice.sendShare(B, { op: 'state', sid: 'abc', screen: true, mic: 'yes', mode: 'two', junk: 1 });
-  ok('S1 share frames arrive in order with only the known fields', await waitFor(() => gotShare.length === 4, 3000, 'share frames') && gotShare[0].op === 'sdp' && gotShare[0].description.type === 'offer' && gotShare[0].pub === A && gotShare[1].candidate.sdpMLineIndex === 0 && gotShare[2].candidate === null && gotShare[3].screen === true && gotShare[3].mic === true && gotShare[3].mode === 'two' && !('junk' in gotShare[3]));
+  alice.sendShare(B, { op: 'state', sid: 'abc', screen: true, mic: 'yes', mode: 'two', rec: 1, junk: 1 });
+  ok('S1 share frames arrive in order with only the known fields', await waitFor(() => gotShare.length === 4, 3000, 'share frames') && gotShare[0].op === 'sdp' && gotShare[0].description.type === 'offer' && gotShare[0].pub === A && gotShare[1].candidate.sdpMLineIndex === 0 && gotShare[2].candidate === null && gotShare[3].screen === true && gotShare[3].mic === true && gotShare[3].mode === 'two' && gotShare[3].rec === true && !('junk' in gotShare[3]));
   ok('S1 nothing of it was stored', !bob.store.conv(A).messages.some((m) => m.kind === 'share' || /candidate:/.test(m.text)) && !JSON.stringify(bob.store.data).includes('candidate:1'));
   let shareErr = ''; try { alice.sendShare(B, { op: 'nope', sid: 'abc' }); } catch (e) { shareErr = e.message; }
   ok('S1 unknown op refused locally; oversized sdp and bad candidate dropped', /bad share/.test(shareErr) && sanitizeShare({ op: 'sdp', sid: 'x', description: { type: 'offer', sdp: 'x'.repeat(100001) } }) === null && sanitizeShare({ op: 'ice', sid: 'x', candidate: 'str' }) === null && sanitizeShare({ op: 'bye', sid: 'x'.repeat(33) }) === null);

@@ -291,3 +291,10 @@ body.short .modal { max-height: calc(100vh - 24px); padding: 16px 18px; }
 .viewer-bar button.danger { color: var(--bad); border-color: var(--bad); }
 .app.narrow .share-btn { padding: 0 8px; font-size: 12px; }
 .app.narrow .viewer-stats { display: none; }
+.viewer-bar button.rec.on { color: #fff; background: var(--bad); border-color: var(--bad); font-variant-numeric: tabular-nums; }
+/* full screen: the viewer covers the page while the window itself is full screen */
+body.theater .viewer { position: fixed; inset: 0; z-index: 60; max-height: none; min-height: 0; border: 0; }
+body.theater .viewer video { max-height: none; height: 100%; }
+body.theater .viewer-bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, .6); color: #fff; opacity: 0; transition: opacity .2s; }
+body.theater .viewer:hover .viewer-bar, body.theater .viewer-bar:focus-within { opacity: 1; }
+body.theater .viewer-stats { color: rgba(255, 255, 255, .7); }

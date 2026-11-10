@@ -26,7 +26,7 @@
     const pc = new RTCPeerConnection({ iceServers: cfg.iceServers, iceTransportPolicy: cfg.iceTransportPolicy, bundlePolicy: 'max-bundle' });
     const sess = { pub, id: id || newSid(), pc, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null,
-      remote: { stream: null, screen: false, mic: false, mode: 'one' }, mode: 'one', askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now() };
+      remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now() };
     pc.onnegotiationneeded = async () => {
       try { sess.makingOffer = true; await pc.setLocalDescription(); send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
       catch (e) { console.error('negotiation', e); }
@@ -129,7 +129,7 @@
     sendState(s); render();
   }
 
-  const sendState = (sess) => send(sess, { op: 'state', screen: !!sess.screenTrack, mic: !!(sess.micTrack && sess.micTrack.enabled), mode: sess.mode });
+  const sendState = (sess) => send(sess, { op: 'state', screen: !!sess.screenTrack, mic: !!(sess.micTrack && sess.micTrack.enabled), mode: sess.mode, rec: !!sess.rec });
 
   function close(why) {
     if (!s) return;
@@ -137,8 +137,9 @@
     clearInterval(sess.statsTimer);
     dropTrack(sess, 'screen'); dropTrack(sess, 'mic');
     try { sess.pc.close(); } catch {}
+    if (sess.rec) stopRecording(sess);
     const v = $('viewerVideo'); v.srcObject = null;
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (theater) setFull(false);
     if (why === 'bye') toast(`${contact(sess.pub)?.name || 'They'} ended the screen share`);
     if (why === 'offline') toast('Screen share ended: the contact went offline', 'err');
     render(); renderContacts();
@@ -168,8 +169,9 @@
       } else if (ev.op === 'ice') {
         try { await s.pc.addIceCandidate(ev.candidate === null ? undefined : ev.candidate); } catch (e) { if (!s.ignoreOffer) console.warn('ice', e.message); }
       } else if (ev.op === 'state') {
-        const was = s.remote.screen;
-        s.remote.screen = ev.screen; s.remote.mic = ev.mic; s.remote.mode = ev.mode;
+        const was = s.remote.screen, wasRec = s.remote.rec;
+        s.remote.screen = ev.screen; s.remote.mic = ev.mic; s.remote.mode = ev.mode; s.remote.rec = !!ev.rec;
+        if (s.remote.rec && !wasRec && s.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
         if (ev.screen && !was) { attachRemote(); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
         if (ev.mode === 'two' && ev.screen && !s.screenTrack && !s.askedBack) { s.askedBack = true; $('shareBackName').textContent = contact(ev.pub)?.name || 'They'; show('mShareBack'); }
         if (!ev.screen && !ev.mic && !s.screenTrack && !s.micTrack) { close('stopped'); return; }
@@ -179,6 +181,83 @@
   }
   function onStatus(ev) { if (s && ev.pub === s.pub && ev.status !== 'online') close('offline'); }
 
+  // --- full screen ----------------------------------------------------------------------
+  // The window itself goes full screen (main: simple fullscreen on macOS, setFullScreen
+  // elsewhere) and the viewer covers the page. Esc, the button or a double-click leave.
+  let theater = false;
+  function applyTheater(on) {
+    theater = !!on; document.body.classList.toggle('theater', theater);
+    const b = $('viewerFull'); b.textContent = theater ? '⤡' : '⤢'; b.title = theater ? 'Leave full screen (Esc)' : 'Full screen (Esc leaves)';
+  }
+  async function setFull(on) {
+    on = on === undefined ? !theater : !!on;
+    if (on && !(s && s.remote.screen)) return;
+    if (on === theater) return;
+    let got = false; try { got = await window.api.fullscreen(on); } catch (e) { toast(ipcErr(e), 'err'); }
+    applyTheater(!!got);
+  }
+  function onFullscreen(ev) { applyTheater(!!ev.on && !!(s && s.remote.screen)); }
+
+  // --- recording what they send ----------------------------------------------------
+  // MediaRecorder on a snapshot of the remote stream (their screen, their voice), 1 s pieces
+  // handed to the main process, which appends them to a .webm in the Videos folder. Wanted
+  // by the viewer's button for this share, or by the Settings switch for every share, the
+  // running one included; the state frame carries `rec` so the sharer sees it.
+  let lastRecording = null;
+  const REC_MIME = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+  const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} KB`);
+  const fmtClock = (ms) => { const t = Math.floor(ms / 1000); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+  const recReady = (sess) => { const st = sess.remote.stream; return !!(sess.remote.screen && st && st.getVideoTracks().length && (!sess.remote.mic || st.getAudioTracks().length)); };
+  async function startRecording(sess) {
+    if (sess.rec || sess.recStarting || !recReady(sess)) return;
+    if (!REC_MIME) { toast('Recording is not supported here', 'err'); sess.recWanted = false; return; }
+    sess.recStarting = true;
+    try {
+      const { id, file } = await window.api.recordStart(sess.pub);
+      const stream = new MediaStream(sess.remote.stream.getTracks());   // a snapshot: tracks added later never disturb the recorder
+      const recorder = new MediaRecorder(stream, { mimeType: REC_MIME, videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 96_000 });
+      const rec = { id, file, recorder, since: Date.now(), bytes: 0, q: Promise.resolve(), timer: null, failed: '' };
+      recorder.ondataavailable = (e) => {
+        if (!e.data || !e.data.size) return;
+        rec.q = rec.q.then(async () => {   // pieces reach the file in order
+          if (rec.failed) return;
+          try { rec.bytes = await window.api.recordChunk(id, new Uint8Array(await e.data.arrayBuffer())); }
+          catch (err) { rec.failed = ipcErr(err); if (recorder.state !== 'inactive') recorder.stop(); }
+        });
+      };
+      recorder.onerror = (e) => { rec.failed = rec.failed || (e.error && e.error.message) || 'recorder error'; if (recorder.state !== 'inactive') recorder.stop(); };
+      recorder.onstop = () => finishRecording(sess, rec);
+      recorder.start(1000);
+      rec.timer = setInterval(() => { if (sess.rec === rec && s === sess && S.current === sess.pub) renderRec(sess); }, 1000);
+      sess.rec = rec;
+      sendState(sess); render();
+    } catch (e) { toast(`Recording did not start: ${ipcErr(e)}`, 'err'); sess.recWanted = false; }
+    finally { sess.recStarting = false; }
+  }
+  function stopRecording(sess) { const rec = sess.rec; if (!rec) return; if (rec.recorder.state !== 'inactive') rec.recorder.stop(); else finishRecording(sess, rec); }
+  async function finishRecording(sess, rec) {
+    if (sess.rec !== rec) return;
+    sess.rec = null; clearInterval(rec.timer);
+    if (rec.failed) sess.recWanted = false;   // no retry loop on a disk that is full
+    await rec.q;
+    let saved = null; try { saved = await window.api.recordStop(rec.id); } catch {}
+    if (saved) lastRecording = saved.file;
+    if (rec.failed) toast(`Recording stopped: ${rec.failed}${saved ? ` (${fmtBytes(saved.bytes)} kept)` : ''}`, 'err');
+    else if (saved) toast(`Recording saved (${fmtBytes(saved.bytes)}): ${saved.file}`, 'ok');
+    if (s === sess) { sendState(sess); render(); }
+  }
+  function syncRecording() {
+    if (!s) return;
+    if (s.recWanted && !s.rec) startRecording(s);               // waits for the tracks if they are not there yet
+    else if (s.rec && (!s.recWanted || !s.remote.screen)) stopRecording(s);
+  }
+  function renderRec(sess) {
+    const b = $('viewerRec'), on = !!sess.rec; b.classList.toggle('on', on);
+    b.textContent = on ? `● ${fmtClock(Date.now() - sess.rec.since)}${sess.rec.bytes ? ' · ' + fmtBytes(sess.rec.bytes) : ''}` : '● Record';
+    b.title = on ? 'Stop recording (the file is kept)' : 'Record what you see and hear from them to a file';
+  }
+  function onSettings() { if (s) { s.recWanted = !!S.settings.recordShares; syncRecording(); if (S.current === s.pub) renderRec(s); } }
+
   // --- UI ---------------------------------------------------------------------
   function render() {
     const pub = S.current, mine = s && s.pub === pub;
@@ -187,11 +266,14 @@
     btn.title = sharing ? 'Stop sending your screen' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
     $('btnShareMode').classList.toggle('hidden', sharing);
     const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(s.micTrack && s.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = on ? 'Mute your microphone' : s.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone'; }
-    const pill = $('sharePill'); const state = !mine ? '' : s.pc.connectionState === 'connected' || s.pc.connectionState === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') : s.pc.connectionState === 'failed' ? 'Failed' : 'Connecting…';
+    const pill = $('sharePill'); const state = !mine ? '' : s.pc.connectionState === 'connected' || s.pc.connectionState === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && s.remote.rec ? ' · recorded' : '') : s.pc.connectionState === 'failed' ? 'Failed' : 'Connecting…';
     pill.classList.toggle('hidden', !state); pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle');
     const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
     if (watching) { $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = s.micTrack && s.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = s.muted ? '🔇' : '🔊'; attachRemote(); }
     document.getElementById('chat').classList.toggle('with-viewer', watching);
+    if (mine) renderRec(s);
+    if (theater && !watching) setFull(false);
+    syncRecording();
   }
   const sessionPub = () => (s ? s.pub : null);
 
@@ -203,13 +285,16 @@
   $('viewerTalk').onclick = toggleMic;
   $('viewerMute').onclick = () => { if (!s) return; s.muted = !s.muted; $('viewerVideo').muted = s.muted; render(); };
   $('viewerShareBack').onclick = () => { if (s) start(s.pub, 'two'); };
-  $('viewerFull').onclick = () => { const v = $('viewerVideo'); if (document.fullscreenElement) document.exitFullscreen(); else v.requestFullscreen().catch(() => {}); };
+  $('viewerFull').onclick = () => setFull();
+  $('viewerVideo').ondblclick = () => setFull();
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && theater) { e.stopPropagation(); setFull(false); } }, true);
+  $('viewerRec').onclick = () => { if (!s) return; s.recWanted = !s.rec; syncRecording(); renderRec(s); };
   $('viewerEnd').onclick = end;
   $('shareBackYes').onclick = () => { window.closeModal(); if (s) start(s.pub, 'two'); };
   $('shareBackNo').onclick = () => window.closeModal();
 
   // debug surface for the UI test (test/ui/share.sh): session internals and audio RTP counters
-  const debug = () => (s ? { sid: s.id, mode: s.mode, askedBack: s.askedBack, polite: s.polite, signaling: s.pc.signalingState, conn: s.pc.connectionState, remote: { screen: s.remote.screen, mic: s.remote.mic, mode: s.remote.mode }, local: { screen: !!s.screenTrack, mic: !!(s.micTrack && s.micTrack.enabled) }, path: s.path } : null);
+  const debug = () => (s ? { sid: s.id, mode: s.mode, rec: !!s.rec, recFile: s.rec ? s.rec.file : null, recBytes: s.rec ? s.rec.bytes : 0, remoteRec: s.remote.rec, theater, askedBack: s.askedBack, polite: s.polite, signaling: s.pc.signalingState, conn: s.pc.connectionState, remote: { screen: s.remote.screen, mic: s.remote.mic, mode: s.remote.mode }, local: { screen: !!s.screenTrack, mic: !!(s.micTrack && s.micTrack.enabled) }, path: s.path } : null);
   async function audio() {
     if (!s) return null;
     const out = { in: null, out: null };
@@ -219,5 +304,5 @@
     });
     return out;
   }
-  window.Share = { onFrame, onStatus, render, end, sessionPub, active: () => !!s, debug, audio };
+  window.Share = { onFrame, onStatus, onSettings, onFullscreen, render, end, setFull, sessionPub, active: () => !!s, lastRecording: () => lastRecording, debug, audio };
 })();
