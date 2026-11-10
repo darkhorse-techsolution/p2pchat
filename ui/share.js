@@ -19,19 +19,15 @@
 // sharer's app hands them to the main process, which posts them to the OS (main/input.js).
 // Only a whole display is ever shared, so coordinates are fractions of that display.
 //
-// Reads from app.js: S, $, toast, contact, ipcErr, renderContacts, show. Exposes window.Share.
+// Reads from app.js: S, $, toast, contact, ipcErr, renderContacts, show. Reads K.nameOf (share/kit.js)
+// and K.tune (share/tune.js: every latency and quality value). Exposes window.Share.
 (() => {
+  const K = window.ShareKit;
   let s = null;                       // the active session, or null
   const newSid = () => Math.random().toString(36).slice(2, 12);
-  // Caps: VP9 screen content at up to 8 Mb/s and 30 fps, 2560 px wide. Congestion control brings
-  // the rate down on a weak link; on a LAN or a good direct path text stays sharp and motion smooth.
-  const MAX_W = 2560, MAX_H = 1600, FPS = 30, VIDEO_KBPS = 8000;
-  const MOVE_MS = 8;                  // a pointer move goes out as it arrives, at most one per 8 ms
-  const ASK_MS = 45000;               // a control request with no answer expires
 
   const ice = () => window.api.iceConfig(); // read per session, so a Settings change applies to the next share
   const send = (sess, f) => window.api.share(sess.pub, { sid: sess.id, ...f }).catch((e) => { toast(ipcErr(e), 'err'); if (/offline/.test(ipcErr(e))) close('offline'); });
-  const nameOf = (pub) => contact(pub)?.name || 'Your contact';
 
   async function create(pub, id) {
     const cfg = await ice();
@@ -49,7 +45,7 @@
     pc.ontrack = (e) => {
       sess.remote.stream = e.streams[0] || sess.remote.stream || new MediaStream();
       if (!e.streams[0]) sess.remote.stream.addTrack(e.track);
-      if (e.track.kind === 'video') lowLatency(e.receiver);
+      K.tune.receiver(e.receiver, e.track.kind);
       e.track.onmute = () => render(); e.track.onunmute = () => render(); e.track.onended = () => render();
       attachRemote(); render();
     };
@@ -63,50 +59,9 @@
     return sess;
   }
 
-  // The viewer plays what arrives as soon as it arrives: no jitter-buffer cushion for a share
-  // that is driven live (Chromium hints; both ignored where unsupported).
-  function lowLatency(receiver) {
-    try { receiver.jitterBufferTarget = 0; } catch {}
-    try { receiver.playoutDelayHint = 0; } catch {}
-  }
-  // VP9 first: its screen-content mode keeps text sharp at a given rate. The rest in Chromium's order.
-  function preferCodecs(pc, sender) {
-    try {
-      const tr = pc.getTransceivers().find((t) => t.sender === sender);
-      const caps = RTCRtpReceiver.getCapabilities('video');
-      if (!tr || !tr.setCodecPreferences || !caps) return;
-      const rank = (c) => (/vp9/i.test(c.mimeType) ? 0 : 1);
-      tr.setCodecPreferences([...caps.codecs].sort((a, b) => rank(a) - rank(b)));
-    } catch (e) { console.warn('codec preference', e.message); }
-  }
-
   function attachRemote() {
     const v = $('viewerVideo');
     if (s && s.remote.stream && v.srcObject !== s.remote.stream) { v.srcObject = s.remote.stream; v.muted = s.muted; v.play().catch(() => {}); }
-  }
-
-  // Where the delay sits: per-window averages from the same 2 s report (viewer: buffer, decode, shown; sharer: encoder input and output).
-  function readout(sess, st) {
-    const p = sess.q || {}, f = sess.pic || {}, q = { hint: sess.screenTrack ? sess.screenTrack.contentHint : '', sent: sess.ctl.sent, recv: sess.ctl.recv };
-    sess.pic = null;
-    st.forEach((r) => {
-      if (r.type === 'media-source' && r.kind === 'video') { q.inFps = r.framesPerSecond; q.inN = r.frames; }
-      if (r.type === 'outbound-rtp' && r.kind === 'video') Object.assign(q, { encFps: r.framesPerSecond, encN: r.framesEncoded, encT: r.totalEncodeTime, limit: r.qualityLimitationReason, target: r.targetBitrate, impl: r.encoderImplementation, svc: r.scalabilityMode, outW: r.frameWidth, outH: r.frameHeight, keyN: r.keyFramesEncoded, hugeN: r.hugeFramesSent, paceT: r.totalPacketSendDelay, pkts: r.packetsSent });
-      if (r.type === 'inbound-rtp' && r.kind === 'video') Object.assign(q, { rxN: r.framesReceived, decN: r.framesDecoded, decT: r.totalDecodeTime, dropN: r.framesDropped, jbT: r.jitterBufferDelay, jbTgt: r.jitterBufferTargetDelay, jbMin: r.jitterBufferMinimumDelay, jbN: r.jitterBufferEmittedCount, procT: r.totalProcessingDelay, nackN: r.nackCount, frzN: r.freezeCount, lossN: r.packetsLost, dec: r.decoderImplementation });
-      if (r.type === 'inbound-rtp' && r.kind === 'audio') Object.assign(q, { aT: r.jitterBufferDelay, aTgt: r.jitterBufferTargetDelay, aMin: r.jitterBufferMinimumDelay, aN: r.jitterBufferEmittedCount });
-      if (r.type === 'media-playout') { q.poT = r.totalPlayoutDelay; q.poN = r.totalSamplesCount; }
-      if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) q.avail = r.availableOutgoingBitrate;
-    });
-    const d = (k) => (q[k] || 0) - (p[k] || 0);                                          // growth of a counter in this window
-    const ms = (t, n) => (d(n) > 0 ? Math.max(0, Math.round(1000 * d(t) / d(n))) : 0);   // seconds over a count -> ms each
-    return (sess.q = Object.assign(q, {
-      bufMs: ms('jbT', 'jbN'), wantMs: ms('jbMin', 'jbN'), holdMs: Math.max(0, ms('jbTgt', 'jbN') - ms('jbMin', 'jbN')),   // hold: what A/V sync or a set minimum adds over the network's own need
-      decMs: ms('decT', 'decN'), procMs: ms('procT', 'decN'), rx: d('rxN'), out: d('decN'), drop: d('dropN'), nack: d('nackN'), freeze: d('frzN'), loss: d('lossN'),
-      shownMs: f.n ? Math.round(f.show / f.n) : 0, e2eMs: f.c ? Math.round(f.e2e / f.c) : 0, e2eWorst: Math.round(f.worst || 0),
-      voiceMs: ms('aT', 'aN'), voiceDevMs: ms('poT', 'poN'), voiceHoldMs: Math.max(0, ms('aTgt', 'aN') - ms('aMin', 'aN')),
-      encMs: ms('encT', 'encN'), paceMs: ms('paceT', 'pkts'), skip: Math.max(0, d('inN') - d('encN')), keys: d('keyN'), huge: d('hugeN'),   // skip: frames that reached the encoder and were not encoded
-      ctlOut: d('sent'), ctlIn: d('recv'), moveBuf: sess.ctl.mv ? sess.ctl.mv.bufferedAmount : 0,
-    }));
   }
 
   async function pollStats(sess) {
@@ -123,7 +78,7 @@
       const now = Date.now(), dt = (now - (sess.lastT || now)) / 1000 || 1;
       const kbpsIn = sess.lastIn !== undefined ? Math.round((inB - sess.lastIn) * 8 / 1000 / dt) : 0, kbpsOut = sess.lastOut !== undefined ? Math.round((outB - sess.lastOut) * 8 / 1000 / dt) : 0;
       sess.lastIn = inB; sess.lastOut = outB; sess.lastT = now; sess.path = path; sess.rtt = rtt; sess.codec = codec;
-      const q = readout(sess, st), kb = (b) => (typeof b === 'number' ? `${Math.round(b / 1000)}k` : '-');
+      const q = K.tune.readout(sess, st), kb = (b) => (typeof b === 'number' ? `${Math.round(b / 1000)}k` : '-');
       sess.stats = (sess.remote.screen ? `${w}×${h} · ${fps} fps · ${(kbpsIn / 1000).toFixed(1)} Mb/s in` + (q.out ? ` · buf ${q.bufMs} (+${q.holdMs} sync) want ${q.wantMs} dec ${q.decMs} ms · shown +${q.shownMs} ms · nack ${q.nack} frz ${q.freeze}` : '') : '')
         + (sess.screenTrack ? `${sess.remote.screen ? ' · ' : ''}${(kbpsOut / 1000).toFixed(1)} Mb/s out` + (q.encN ? ` · enc ${Math.round(q.inFps || 0)}>${Math.round(q.encFps || 0)} fps ${q.encMs} ms skip ${q.skip}${q.limit && q.limit !== 'none' ? ' ' + q.limit : ''} ${q.hint}` : '') : '')
         + (codec ? ` · ${codec}` : '') + (rtt >= 0 ? ` · ${rtt} ms` : '') + (path ? ` · ${path}` : '');
@@ -148,17 +103,17 @@
     sess.mode = mode || sess.mode;
     if (sess.screenTrack) return;
     let screen;
-    try { screen = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: FPS, max: FPS } }, audio: false }); }
+    try { screen = await navigator.mediaDevices.getDisplayMedia(K.tune.displayConstraints()); }
     catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); if (!sess.remote.screen && !sess.remote.mic) close('capture'); return; }
     const track = screen.getVideoTracks()[0];
-    track.contentHint = sess.ctl.give === 'on' ? 'motion' : 'detail';
-    try { await track.applyConstraints({ width: { max: MAX_W }, height: { max: MAX_H }, frameRate: { ideal: FPS, max: FPS } }); } catch {}
+    track.contentHint = K.tune.hint(sess.ctl.give === 'on');
+    await K.tune.capture(track);
     track.onended = () => { if (s === sess && sess.screenTrack === track) stopSharing(); }; // the OS ended the capture
     sess.screenTrack = track; sess.local.addTrack(track);
     openChannels(sess);                                     // in the same task as addTrack: one negotiation covers both
-    sess.screenSender = sess.pc.addTrack(track, sess.local);
-    preferCodecs(sess.pc, sess.screenSender);
-    try { const p = sess.screenSender.getParameters(); p.encodings = [{ maxBitrate: VIDEO_KBPS * 1000, maxFramerate: FPS }]; await sess.screenSender.setParameters(p); } catch (e) { console.error('share caps', e.message); }
+    sess.screenSender = sess.pc.addTrack(track, K.tune.streamFor(sess, 'video'));
+    K.tune.codecs(sess.pc, sess.screenSender);
+    await K.tune.sender(sess);
     await addMic(sess, true);
     sendState(sess); render(); renderContacts();
   }
@@ -167,9 +122,9 @@
     if (sess.micTrack) return true;
     if (!(await window.api.micPermission())) { if (!quiet) toast('Microphone access was not allowed; sharing without sound', 'err'); return false; }
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+      const mic = await navigator.mediaDevices.getUserMedia(K.tune.micConstraints());
       const t = mic.getAudioTracks()[0];
-      sess.micTrack = t; sess.local.addTrack(t); sess.micSender = sess.pc.addTrack(t, sess.local);
+      sess.micTrack = t; sess.local.addTrack(t); sess.micSender = sess.pc.addTrack(t, K.tune.streamFor(sess, 'audio'));
       return true;
     } catch (e) { if (!quiet) toast(`Microphone: ${e.message}`, 'err'); return false; }
   }
@@ -205,7 +160,7 @@
     if (sess.ctl.give === 'on') window.api.controlRevoke().catch(() => {});
     clearTimeout(sess.ctl.flush); clearTimeout(sess.ctl.askTimer);
     if (!$('mControl').classList.contains('hidden')) window.closeModal();
-    $('viewerVideo').classList.remove('ctl'); $('viewerVideo').removeEventListener(MOVE_EV, onMove);
+    $('viewerVideo').classList.remove('ctl'); $('viewerVideo').removeEventListener(K.tune.MOVE_EV, onMove);
     dropTrack(sess, 'screen'); dropTrack(sess, 'mic');
     try { sess.pc.close(); } catch {}
     if (sess.rec) stopRecording(sess);
@@ -268,20 +223,15 @@
   function sendCtl(sess, msg, viaMove) {
     const ch = viaMove ? sess.ctl.mv : sess.ctl.dc;
     if (!ch || ch.readyState !== 'open') return false;
-    if (viaMove && ch.bufferedAmount > 1024) return false;   // SCTP has not drained for about 30 moves: the path is stalled, drop rather than replay
+    if (viaMove && ch.bufferedAmount > K.tune.MOVE_BUF) return false;
     try { ch.send(JSON.stringify(msg)); sess.ctl.sent++; return true; } catch { return false; }
   }
-  function sendMove(sess, m) {   // first move after a pause: at once; inside a burst: the latest, when the hold ends
-    const c = sess.ctl, now = performance.now(), wait = MOVE_MS - (now - c.moveAt);
-    if (wait <= 0) { clearTimeout(c.flush); c.flush = null; c.move = null; c.moveAt = now; sendCtl(sess, m, true); return; }
-    c.move = m;
-    if (!c.flush) c.flush = setTimeout(() => { c.flush = null; const p = c.move; if (p) { c.move = null; c.moveAt = performance.now(); sendCtl(sess, p, true); } }, wait);
-  }
+  K.sessions = { dc: (sess, label, msg) => sendCtl(sess, msg, label === 'move') };   // what tune.js sends pointer moves through
   function onCtl(sess, data) {
     let m; try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
     sess.ctl.recv++;
-    const name = nameOf(sess.pub);
+    const name = K.nameOf(sess.pub);
     switch (m.t) {
       case 'cur':   // the shape of their pointer: drawn as my own while I control
         sess.ctl.cursor = cursorCss(m);
@@ -332,10 +282,10 @@
     if (sess !== s || !sess.screenTrack) { sess.ctl.give = 'off'; sendCtl(sess, { t: 'ctl', on: false, why: 'notsharing' }); render(); return; }
     let r; try { r = await window.api.controlGrant(); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
     if (sess !== s) return;
-    const name = nameOf(sess.pub);
+    const name = K.nameOf(sess.pub);
     if (r && r.ok) {
       sess.ctl.give = 'on';
-      try { if (sess.screenTrack) sess.screenTrack.contentHint = 'motion'; } catch {}   // smooth over sharp while they drive
+      try { if (sess.screenTrack) sess.screenTrack.contentHint = K.tune.hint(true); } catch {}
       sendCtl(sess, { t: 'ctl', on: true });
       toast(`${name} now uses your mouse and keyboard. ✋ Stop control next to the Sharing pill ends it.`);
     } else {
@@ -348,10 +298,10 @@
   // sharer: control of my screen ends (Deny, ✋, they released it, the share stops, the helper died)
   function giveUp(sess, why) {
     const was = sess.ctl.give; sess.ctl.give = 'off';
-    if (was === 'on') { window.api.controlRevoke().catch(() => {}); try { if (sess.screenTrack) sess.screenTrack.contentHint = 'detail'; } catch {} }
+    if (was === 'on') { window.api.controlRevoke().catch(() => {}); try { if (sess.screenTrack) sess.screenTrack.contentHint = K.tune.hint(false); } catch {} }
     if (why !== 'released' && was !== 'off') sendCtl(sess, { t: 'ctl', on: false, why: why === 'denied' ? undefined : why === 'stopped' ? 'stopped' : 'helper' });
     if (!$('mControl').classList.contains('hidden')) window.closeModal();
-    if (was === 'on') toast(why === 'released' ? `${nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' ? 'Remote control stopped' : `Remote control stopped: ${why}`);
+    if (was === 'on') toast(why === 'released' ? `${K.nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' ? 'Remote control stopped' : `Remote control stopped: ${why}`);
     render();
   }
   function onControl(ev) { if (s && s.ctl.give === 'on' && !ev.on) giveUp(s, ev.why || 'the input helper stopped'); }
@@ -362,20 +312,20 @@
     if (s.ctl.asked) return;
     if (!sendCtl(s, { t: 'req' })) { toast('Not connected yet: try again in a moment', 'err'); return; }
     const sess = s; sess.ctl.asked = true;
-    sess.ctl.askTimer = setTimeout(() => { if (sess.ctl.asked) { sess.ctl.asked = false; if (s === sess) { toast(`${nameOf(sess.pub)} has not answered`); render(); } } }, ASK_MS);
+    sess.ctl.askTimer = setTimeout(() => { if (sess.ctl.asked) { sess.ctl.asked = false; if (s === sess) { toast(`${K.nameOf(sess.pub)} has not answered`); render(); } } }, K.tune.ASK_MS);
     render();
   }
   function startTaking(sess) {
     sess.ctl.take = true; sess.ctl.move = null; sess.ctl.moveAt = 0;
     clearTimeout(sess.ctl.flush); sess.ctl.flush = null;
     const v = $('viewerVideo'); v.classList.add('ctl'); v.style.cursor = sess.ctl.cursor || ''; v.focus();
-    v.addEventListener(MOVE_EV, onMove);
+    v.addEventListener(K.tune.MOVE_EV, onMove);
   }
   function stopTaking(sess) {
     clearTimeout(sess.ctl.flush); sess.ctl.flush = null; sess.ctl.move = null;
     if (sess.ctl.take) { sess.ctl.take = false; sendCtl(sess, { t: 'r' }); }
     const v = $('viewerVideo'); v.classList.remove('ctl'); v.style.cursor = ''; sess.ctl.cursor = null;
-    v.removeEventListener(MOVE_EV, onMove);
+    v.removeEventListener(K.tune.MOVE_EV, onMove);
   }
   const taking = () => !!(s && s.ctl.take && s.remote.screen);
   // where on their display the pointer is: fractions of the video picture (object-fit: contain leaves bars)
@@ -387,8 +337,7 @@
     const c = (x) => Math.min(1, Math.max(0, x));
     return { x: +c((e.clientX - ox) / cw).toFixed(4), y: +c((e.clientY - oy) / ch).toFixed(4) };
   }
-  const MOVE_EV = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';   // raw: not held to the next frame
-  const onMove = (e) => { if (taking()) sendMove(s, { t: 'm', ...at(e) }); };
+  const onMove = (e) => { if (taking()) K.tune.sendMove(s, { t: 'm', ...at(e) }); };
   const keysGoRemote = () => taking() && (document.activeElement === $('viewerVideo') || theater) && $('backdrop').classList.contains('hidden');
 
   // --- full screen ----------------------------------------------------------------------
