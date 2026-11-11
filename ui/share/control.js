@@ -129,8 +129,16 @@
   }
   // main: the input helper stopped by itself
   function onHelper(ev) { const o = C.owner; if (ev && !ev.on && o && o.token && ev.token === o.token) endGive(o.sess, ev.why || 'the input helper stopped'); }
-  // main: the shape of my pointer changed; the session that drives it draws it
-  function onCursor(c) { const o = C.owner; if (o && o.token && c && typeof c === 'object' && c.token === o.token && o.sess.ctl.give === 'on') dc(o.sess, { t: 'cur', w: c.w, h: c.h, pw: c.pw, ph: c.ph, hx: c.hx, hy: c.hy, png: c.png }); }
+  // main: the shape of my pointer changed; the session that drives it draws it. The picture has to fit
+  // one data-channel message (main lets through more than the connection takes): one that does not is
+  // left out here, where send() would throw on it, and their pointer keeps the shape it had.
+  function onCursor(c) {
+    const o = C.owner;
+    if (!o || !o.token || !c || typeof c !== 'object' || c.token !== o.token || o.sess.ctl.give !== 'on') return;
+    const m = { t: 'cur', w: c.w, h: c.h, pw: c.pw, ph: c.ph, hx: c.hx, hy: c.hy, png: c.png }, sctp = o.sess.pc && o.sess.pc.sctp;
+    if (JSON.stringify(m).length > ((sctp && sctp.maxMessageSize) || K.DC_FIT)) return;   // base64 and digits: characters are bytes
+    dc(o.sess, m);
+  }
 
   // --- viewer: their screen --------------------------------------------------------------
   // ask for their mouse and keyboard, or let go

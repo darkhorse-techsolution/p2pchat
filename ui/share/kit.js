@@ -13,6 +13,7 @@
   K.DENY_COOLDOWN_MS = 10000;   // after a Deny the same contact's next control request opens no dialog for this long
   K.ARM_MS = 800;          // the control dialog takes no click on Allow for this long after it opened
   K.DC_MAX = 400000;       // characters of one data-channel message; a longer one is dropped unparsed (a pointer image is up to 300000)
+  K.DC_FIT = 262144;       // bytes one data-channel message may have when the connection does not say (Chromium's SCTP message size)
   K.nameOf = (pub) => contact(pub)?.name || 'Your contact';
   // A share prompt has to be seen: it sits under the full-screen viewer and under the image viewer, and
   // only one modal shows at a time. So it leaves full screen and closes what is open before it shows.
