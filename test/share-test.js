@@ -995,6 +995,45 @@ function pageWorld(extra = {}) {
   ok('V3 and only the screen on screen takes my keys and pointer', C.isTaking() === true && K.viewer.bound === cy);
 }
 
+// V7: main says no to the key routing while the window is not in full screen yet, and the question is put again when main reports that it is (review of stage D, LOW 4)
+{
+  (async () => {
+    const els = new Map(), told = [];
+    const $ = (id) => { if (!els.has(id)) { const cls = new Set(); els.set(id, { id, textContent: '', title: '', style: {}, srcObject: null, classList: { contains: (c) => cls.has(c), add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle: (c, on) => { if (on === undefined ? !cls.has(c) : on) cls.add(c); else cls.delete(c); } }, focus() {}, play: async () => {}, addEventListener() {}, removeEventListener() {}, requestVideoFrameCallback() {} }); } return els.get(id); };
+    const S = { current: 'alice' }, sess = { pub: 'alice', closed: false, remote: { screen: true, view: {} }, ctl: { take: true, cursor: null } };
+    let there = false;   // the window, as main sees it: in full screen or not yet
+    const K = load(['kit.js', 'tune.js', 'viewer.js'], { $, S, contact: () => ({}), toast() {}, ipcErr: String, document: { addEventListener() {}, body: { classList: $('body').classList } }, addEventListener() {},
+      api: { keysRemote: async (on) => { told.push(on); return on && there; }, fullscreen: async (on) => on } });
+    K.sessions = { get: (pub) => (pub === 'alice' ? sess : null), dc: () => true }; K.control = { isTaking: () => K.viewer.bound === sess, pending: null }; K.clip = { poke() {} };
+    K.viewer.rebind(); K.viewer.onFullscreen({ on: true });   // main's first word comes with the call: the window is not in full screen yet
+    ok('V7 asked at once', told.join() === 'true' && K.viewer.keysWanted === true);
+    K.viewer.syncKeys(); K.viewer.rebind();
+    ok('V7 and not twice while the answer is on its way', told.length === 1);
+    await tick();
+    ok('V7 main said no: the page holds what main answered, not what it asked for', K.viewer.keysWanted === false && told.length === 1);
+    there = true; K.viewer.onFullscreen({ on: true }); await tick();
+    ok('V7 main reports that the window is in full screen: asked again, and on', told.join() === 'true,true' && K.viewer.keysWanted === true);
+    K.viewer.onFullscreen({ on: true }); K.viewer.syncKeys(); K.viewer.rebind(); await tick();
+    ok('V7 not asked again after a yes', told.length === 2);
+    K.viewer.onFullscreen({ on: false }); await tick();
+    ok('V7 full screen ends: off', told.join() === 'true,true,false' && K.viewer.keysWanted === false);
+    // main's side, from the text of main/main.js: the report when the window has arrived
+    const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8').split('\n');
+    const line = (re) => src.find((x) => re.test(x)) || '', block = (re) => { const i = src.findIndex((x) => re.test(x)); if (i < 0) return ''; let j = i; while (src[j] !== '}') j++; return src.slice(i, j + 1).join('\n'); };
+    const lis = {}, pushes = [], win = { fs: false, isDestroyed: () => false, isFullScreen() { return this.fs; }, isSimpleFullScreen: () => false, setFullScreen() {}, on: (n, f) => { lis[n] = f; }, webContents: { setIgnoreMenuShortcuts() {} } };
+    const ctx = vm.createContext({ isMac: false, win, log: { info() {} }, push: (type, d) => pushes.push(`${type}:${d.on}`) });
+    vm.runInContext([line(/^function isViewerFullscreen\(\)/), line(/^let keysRemote = false;/), line(/^let viewerFull = false;/), block(/^function setKeysRemote\(on\) \{/), block(/^function setViewerFullscreen\(on\) \{/), line(/win\.on\('enter-full-screen'/), line(/win\.on\('leave-full-screen'/), 'this.m = { setKeysRemote, setViewerFullscreen };'].join('\n'), ctx);
+    const m = ctx.m;
+    if (lis['enter-full-screen']) lis['enter-full-screen']();
+    ok('V7 main: a window that goes full screen without the viewer asking is not reported', pushes.length === 0);
+    m.setViewerFullscreen(true); const early = m.setKeysRemote(true);
+    win.fs = true; if (lis['enter-full-screen']) lis['enter-full-screen']();
+    ok('V7 main: asked for full screen, it says no to the keys until the window is there, and reports when it is', early === false && pushes.join() === 'fullscreen:true,fullscreen:true' && m.setKeysRemote(true) === true);
+    win.fs = false; lis['leave-full-screen'](); pushes.length = 0; win.fs = true; lis['enter-full-screen']();
+    ok('V7 main: after the window left full screen a later arrival is not the viewer\'s any more', pushes.length === 0);
+  })().catch((e) => { console.log('FAIL  V7 threw:', e.stack); process.exitCode = 1; });
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

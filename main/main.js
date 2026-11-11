@@ -468,6 +468,7 @@ function isViewerFullscreen() { return !!win && !win.isDestroyed() && (win.isFul
 // reloads or dies. The three global hotkeys (show/hide, window mode, full screen) are not touched: they
 // stay this machine's. Keys the operating system keeps for itself never reach the app and are not asked for.
 let keysRemote = false;
+let viewerFull = false;   // the viewer asked for full screen and the window has not left it since
 function setKeysRemote(on) {
   on = !!on && isViewerFullscreen();
   if (on === keysRemote) return on;
@@ -480,6 +481,7 @@ function setViewerFullscreen(on) {
   if (!win || win.isDestroyed()) return false;
   on = !!on;
   if (!on) setKeysRemote(false);
+  viewerFull = on;
   if (on !== isViewerFullscreen()) { if (isMac) win.setSimpleFullScreen(on); else win.setFullScreen(on); push('fullscreen', { on }); }
   return on;
 }
@@ -736,7 +738,10 @@ async function boot() {
   if (isMac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // once, before the first show
   win.on('close', (e) => { if (!quitting && BACKGROUND_APP && (hotkeyOk || tray)) { e.preventDefault(); hideWindow(); } else { quitting = true; } });
   win.on('hide', () => { log.info('window hide event'); push('hidden'); });
-  win.on('leave-full-screen', () => { setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
+  win.on('leave-full-screen', () => { viewerFull = false; setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
+  // Elsewhere than on macOS the window is in full screen a moment after the viewer asked for it. The page asks
+  // for the key routing right away and is told no; it is told here when the window is there, and asks again.
+  win.on('enter-full-screen', () => { if (viewerFull) push('fullscreen', { on: true }); });
   win.on('show', () => { log.info('window show event'); if (isLinux && clampOpacity(settings().opacity) < 0.995) linuxSetOpacity(clampOpacity(settings().opacity)); });
   win.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
   win.once('ready-to-show', () => { if (!process.argv.includes('--start-hidden')) showWindow(); });

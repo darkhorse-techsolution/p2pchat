@@ -45,11 +45,16 @@
   // shortcuts, the opacity keys) belong to that screen as well: main is told when that begins and when it
   // ends (K.viewer.keysWanted), and the key listeners below send them on like any other key. Asked again
   // wherever one of the two can change: full screen, control, the session on screen.
+  // keysWanted is what was asked until main answers, and from then on what main answered. Main says no
+  // while the window is not in full screen yet (elsewhere than on macOS that comes a moment after it was
+  // asked for); it reports when the window is there, and the question is then put again.
+  let keysTurn = 0;
   function syncKeys() {
     const want = K.viewer.theater && !!K.control.isTaking();
     if (want === K.viewer.keysWanted) return;
     K.viewer.keysWanted = want;
-    window.api.keysRemote(want).catch(() => {});
+    const turn = ++keysTurn, heard = (got) => { if (turn === keysTurn) K.viewer.keysWanted = !!got; };   // only the answer to the latest question counts
+    window.api.keysRemote(want).then(heard, () => heard(false));
   }
 
   // The "share yours too" prompt belongs to the session that asked (K.viewer.backFor): its Yes shares with
