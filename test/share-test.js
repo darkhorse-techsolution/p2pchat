@@ -209,7 +209,7 @@ const tick = () => new Promise((r) => setImmediate(r));
   })().catch((e) => { console.log('FAIL  R3 threw:', e.stack); process.exitCode = 1; });
 }
 
-// R4: a request that is taken back or runs out starts the same cooldown as a Deny
+// R4: a request that is taken back starts the same cooldown as a Deny; one that ran out unanswered does not
 {
   const w = controlWorld(), C = w.K.control, bob = w.sess('bob');
   for (let i = 0; i < 50; i++) { w.from(bob, { t: 'req' }); w.from(bob, { t: 'rel' }); }
@@ -219,9 +219,8 @@ const tick = () => new Promise((r) => setImmediate(r));
   w.now += 2; w.from(bob, { t: 'req' });
   ok('R4 and the next one comes up when the cooldown is over, not before', early === 1 && w.dialogs.length === 2 && C.pending && C.pending.sess === bob);
   w.sent.length = 0; w.timers.filter((t) => t.on && t.ms === w.K.tune.GIVE_ASK_MS).forEach((t) => t.fn());   // nobody answers: the dialog gives up
-  w.from(bob, { t: 'req' }); const afterExpiry = w.dialogs.length;
-  w.now += w.K.DENY_COOLDOWN_MS + 1; w.from(bob, { t: 'req' });
-  ok('R4 a request that ran out is told so, and asking again is held off for the cooldown as well', w.sent[0] === 'bob:{"t":"ctl","on":false,"why":"expired"}' && afterExpiry === 2 && w.dialogs.length === 3);
+  w.now += 1000; w.from(bob, { t: 'req' });
+  ok('R4 a request that ran out is told so, and the next one opens the dialog at once: nobody had seen the first', w.sent.join() === 'bob:{"t":"ctl","on":false,"why":"expired"}' && w.dialogs.length === 3 && C.pending && C.pending.sess === bob);
 }
 
 // R5: a prompt closes its own modal, also when another one was opened on top of it

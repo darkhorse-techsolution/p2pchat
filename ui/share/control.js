@@ -20,7 +20,7 @@
   const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, clip, timer }
   const clipOn = () => S.settings.clipboardSync !== false && !K.clip.link;   // the clipboard can be offered or taken up: my switch is on and no other session has it
   const dc = (sess, msg) => K.sessions.dc(sess, 'ctl', msg);
-  // When I last said no to a contact (a Deny, or a request of theirs that was taken back or ran out). By
+  // When I last said no to a contact (a Deny, or a request of theirs that they took back). By
   // contact, not by session: ending the share and coming back in a new one must not bring the dialog
   // straight up again, and a viewer that dropped out is added again without a click of mine.
   const refused = new Map();   // pub -> ms
@@ -154,9 +154,10 @@
     const ctl = sess.ctl, mine = !!C.owner && C.owner.sess === sess;
     if (C.pending && C.pending.sess === sess) {
       clearTimeout(C.pending.timer); C.pending = null; K.unprompt('mControl');
-      // A request they took back, or that ran out, counts like a Deny for the cooldown: asking and letting
-      // go in a row would bring the dialog up again each time, over whatever I have open.
-      if (why === 'released' || why === 'expired') refuse(sess.pub);
+      // A request they took back counts like a Deny for the cooldown: asking and letting go in a row would
+      // bring the dialog up again each time, over whatever I have open. One that ran out does not: nobody
+      // was there to see it, and the next request must not be answered with a no that nobody gave.
+      if (why === 'released') refuse(sess.pub);
     }
     if (ctl.give === 'off' && !mine) return;
     const was = ctl.give, token = mine ? C.owner.token : null;
