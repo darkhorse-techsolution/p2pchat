@@ -53,7 +53,8 @@ echo "alice pill: $(A "$PILLQ")"
 B "(()=>{document.getElementById('viewerRec').click();return 'clicked'})()" >/dev/null
 sleep_py 2
 REC1=$(B "window.Share.lastRecording()")
-echo "saved: $REC1 ($(stat -f %z "$REC1" 2>/dev/null || stat -c %s "$REC1") bytes) magic=$(xxd -l 4 -p "$REC1") (1a45dfa3 = EBML/WebM)"
+SZ1=$(stat -f %z "$REC1" 2>/dev/null || stat -c %s "$REC1")   # the size is all that is read of a recording: the file holds a picture of this screen
+echo "saved: $REC1 ($SZ1 bytes) more than 1000 bytes: $([ "${SZ1:-0}" -gt 1000 ] && echo yes || echo NO)"
 echo "bob after:  $(B "$RECQ")"
 echo "alice after: $(A "$PILLQ")"
 echo "--- 1d. bob: the Settings switch turned on during the share starts a recording; off stops it"
@@ -92,7 +93,7 @@ if [ "$DRY" = true ] || [ "$REAL_INPUT" = 1 ]; then
     P1=$(osascript -l JavaScript -e "$CUR")
     F=$(frac "$X0" "$Y0"); B "window.Share.inject({t:'m',x:${F% *},y:${F#* }})" >/dev/null; sleep_py 0.6
     echo "pointer: before $P0 -> after bob's move $P1 (wanted $((X0+5)) $((Y0+5))) -> back $(osascript -l JavaScript -e "$CUR")"
-    CDP_CALL='{"method":"Page.bringToFront"}' A "'front'" >/dev/null; sleep_py 1
+    CDP_CALL='{"method":"Page.bringToFront"}' node "$CDP" 9421 "'front'" >/dev/null; sleep_py 1   # node itself, not A: in front of a shell function /bin/sh keeps the assignment, and every later call would bring the window to the front again
     COMP=$(A "(()=>{const r=document.getElementById('input').getBoundingClientRect();return JSON.stringify({x:Math.round(window.screenX+r.left+r.width/2),y:Math.round(window.screenY+(window.outerHeight-window.innerHeight)+r.top+r.height/2),focus:document.hasFocus()})})()")
     echo "alice composer on screen: $COMP"
     if [ "${COMP##*focus\":}" = "true}" ]; then
