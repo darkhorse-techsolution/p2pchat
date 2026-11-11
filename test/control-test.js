@@ -74,6 +74,29 @@ const DISPLAY = { id: 1, bounds: { x: 0, y: 0, width: 1000, height: 500 }, scale
   const stopsBefore = c.stops.length, dropped = g.drop();
   ok('G6 drop() (the helper exited by itself) ends the grant without stopping anything', dropped.token === r9.token && g.current() === null && c.stops.length === stopsBefore && g.input(r9.token, { t: 'r' }) === false);
 
+  // G7: the clipboard is a part of the grant: allowed with it or not, for its contact and token, and used up once
+  c = fakeControl(); g = createGrant({ control: c });
+  ok('G7 no grant, no clipboard', g.clipOk('alice', 'x') === false && g.clipOk('alice', undefined) === false);
+  const pc1 = g.start('alice', DISPLAY, true);
+  ok('G7 not while the grant is still starting', g.clipOk('alice', g.current().token) === false);
+  c.answer[0].res({ ok: true }); const rc1 = await pc1;
+  ok('G7 a grant allowed with the clipboard: yes for its contact and its token', g.clipOk('alice', rc1.token) === true);
+  ok('G7 not for another contact, another token, or a token that is not a string', g.clipOk('bob', rc1.token) === false && g.clipOk('alice', 'f'.repeat(32)) === false && g.clipOk('alice', null) === false && g.clipOk('alice', { toString: () => rc1.token }) === false);
+  g.clipSpent('some other token');
+  ok('G7 a stale token uses nothing up', g.clipOk('alice', rc1.token) === true);
+  g.clipSpent(rc1.token);
+  ok('G7 used up: the grant goes on, its clipboard does not come back', g.clipOk('alice', rc1.token) === false && g.current() !== null && g.input(rc1.token, { t: 'r' }) === true);
+  g.end('stopped');
+  const pc2 = g.start('alice', DISPLAY, true); c.answer[1].res({ ok: true }); const rc2 = await pc2;
+  ok('G7 the next grant has its own', g.clipOk('alice', rc2.token) === true && g.clipOk('alice', rc1.token) === false);
+  g.end('stopped');
+  ok('G7 and it ends with the grant', g.clipOk('alice', rc2.token) === false);
+  for (const v of [undefined, false, 0, 1, 'true', {}, null]) {
+    const px = g.start('alice', DISPLAY, v); c.answer[c.answer.length - 1].res({ ok: true }); const rx = await px;
+    ok(`G7 a grant asked with ${JSON.stringify(v)} for the clipboard has none`, rx.ok === true && g.clipOk('alice', rx.token) === false);
+    g.end('stopped');
+  }
+
   // D1: the dry controller never starts a helper
   const lines = []; const log = { info: (...a) => lines.push(a.join(' ')), error: (...a) => lines.push(a.join(' ')) };
   const none = '/nonexistent-helpers-dir';

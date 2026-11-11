@@ -16,6 +16,9 @@
   K.ARM_MS = 800;          // the control dialog takes no click on Allow for this long after it opened
   K.DC_MAX = 400000;       // characters of one data-channel message; a longer one is dropped unparsed (a pointer image is up to 300000)
   K.DC_FIT = 262144;       // bytes one data-channel message may have when the connection does not say (Chromium's SCTP message size)
+  K.CLIP_MAX = 65536;      // one copied text: UTF-8 bytes where main reads and writes the clipboard, UTF-16 units where its parts are put together
+  K.CLIP_PART = 4096;      // UTF-16 units of one part of a copied text on the clip channel
+  K.CLIP_PARTS = 16;       // parts of one text at most
   K.nameOf = (pub) => contact(pub)?.name || 'Your contact';
   // True where this window is part of what a screen capture shows (Linux, the monitor build, blocking
   // switched off): what it says about the audience is then on every viewer's screen.

@@ -55,6 +55,7 @@
         <div class="chat-actions">
           <span class="share-pill hidden" id="sharePill"></span>
           <button class="stop-ctl hidden" id="btnStopCtl" title="They are using your mouse and keyboard: click to stop that">✋ Stop control</button>
+          <button class="stop-ctl hidden" id="btnClip" title="Clipboard text is shared with the contact who controls your screen. Click to stop sharing the clipboard; control stays.">📋 Shared</button>
           <div class="share-ctl">
             <button class="share-btn" id="btnShare" title="Send your screen to this contact, one click">⇡ Share screen</button>
             <button class="icon-btn share-mode" id="btnShareMode" title="One way or two way">▾</button>
@@ -78,6 +79,7 @@
           <button id="viewerTalk" title="Send your microphone so they hear you">🎙 Talk</button>
           <button id="viewerShareBack" title="Share your screen too">Share mine</button>
           <button id="viewerCtl" class="ctl" title="Ask to use their mouse and keyboard">🖱 Control</button>
+          <button id="viewerClip" class="clip hidden" title="Clipboard text is shared both ways until control ends. Click to stop sharing the clipboard.">📋 Shared</button>
           <button id="viewerRec" class="rec" title="Record what you see and hear from them to a file">● Record</button>
           <button id="viewerFull" title="Full screen (Esc leaves, unless you are controlling their screen)">⤢</button>
           <button class="danger" id="viewerEnd" title="End the screen share for both">End</button>
@@ -173,7 +175,8 @@
     <label class="check"><input type="checkbox" id="setRecordShares"> Record incoming screen shares to a file (their screen and voice)</label>
     <div class="row"><button id="openRecordings">Open recordings folder</button><span class="muted small" id="recordingsDir"></span></div>
     <div class="muted small">Starts when a contact's screen arrives, also for a share already running when you switch this on; ● Record in the viewer does the same for one share. Plain .webm files (VP9 + Opus) outside the encrypted vault, playable anywhere. The contact's app shows that they are being recorded.</div>
-    <div class="muted small">Remote control: 🖱 Control in the viewer asks the sharer; they see a dialog and can stop it at any moment. Nothing is allowed by default.</div>
+    <label class="check"><input type="checkbox" id="setClipboardSync"> Share clipboard text during remote control (both ways, only while control is on)</label>
+    <div class="muted small">Remote control: 🖱 Control in the viewer asks the sharer; they see a dialog and can stop it at any moment. Nothing is allowed by default. With the switch above on, the dialog also offers to share copied text (up to 64 KB per copy) until control ends; either side can leave it out.</div>
     <label>Code blocks</label>
     <label class="check"><input type="checkbox" id="setCodeWrap"> Wrap long lines (no sideways scrolling)</label>
     <label class="check"><input type="checkbox" id="setCodeCollapse"> Collapse blocks longer than 18 lines, with a "Show all" button</label>
@@ -211,6 +214,8 @@
   <div class="modal hidden" id="mControl">
     <h3>Let them control your screen?</h3>
     <p class="muted"><b id="controlName"></b> <span class="small" id="controlWho"></span> asks to use your mouse and keyboard through the screen share. They can click and type anywhere on the display you are sharing until you stop it: <b>✋ Stop control</b> next to the Sharing pill, or stop sharing.</p>
+    <label class="check hidden" id="controlClipRow"><input type="checkbox" id="controlClip" checked> <span>Share clipboard text with <b id="controlClipName"></b> while they control. Text you copy goes to them, and text they copy comes to your clipboard (text only, up to 64 KB). It stops when control stops.</span></label>
+    <div class="muted small hidden" id="controlClipNote"></div>
     <div class="modal-actions"><button class="ghost" id="controlNo">Deny</button><span class="spacer"></span><button class="primary" id="controlYes">Allow control</button></div>
   </div>
   <div class="modal hidden" id="mShareBack">
@@ -241,6 +246,7 @@
 <script src="share/session.js"></script>
 <script src="share/cast.js"></script>
 <script src="share/control.js"></script>
+<script src="share/clip.js"></script>
 <script src="share/record.js"></script>
 <script src="share/viewer.js"></script>
 <script src="share.js"></script>

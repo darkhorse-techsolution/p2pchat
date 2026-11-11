@@ -315,3 +315,15 @@ body.theater .cast-bar.ctl { position: fixed; top: 0; left: 0; right: 0; z-index
 .cast-list label.check { margin: 0; padding: 6px 8px; border-radius: 8px; }
 .cast-list .muted { margin-left: auto; }
 .viewer-aud { color: var(--dim); font-size: 11px; }
+/* the clipboard link of a control session: both sides see it while it is on, and one click ends it */
+.viewer-bar button.clip, #btnClip { color: var(--bg); background: var(--good); border-color: var(--good); }
+/* While it shows, the row it is in may wrap: "📋 Shared" must not end up out of reach behind the window's edge, and
+   the header's buttons, one more now, must not squeeze the name into a column of letters. */
+.chat-actions:has(#btnClip:not(.hidden)) { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; min-width: 0; }
+.chat-actions:has(#btnClip:not(.hidden)) .share-pill { min-width: 0; overflow: hidden; }
+.chat-head:has(#btnClip:not(.hidden)) .chat-title { min-width: 72px; overflow: hidden; }
+.chat-head:has(#btnClip:not(.hidden)) .chat-name, .chat-head:has(#btnClip:not(.hidden)) .chat-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viewer-bar:has(#viewerClip:not(.hidden)) { flex-wrap: wrap; row-gap: 4px; }
+#controlClipRow { align-items: flex-start; font-size: 13px; line-height: 1.45; margin-top: 4px; }
+#controlClipRow input { flex: none; margin-top: 3px; }
+#controlClipNote { margin-top: 6px; }

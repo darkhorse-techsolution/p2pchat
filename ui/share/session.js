@@ -6,7 +6,7 @@
 // stream or on two.
 //
 // Reads from app.js: S, toast, contact, ipcErr, renderContacts. Reads at call time: K.tune, K.paint,
-// K.paintStats, K.viewer, K.rec, K.cast and K.control.
+// K.paintStats, K.viewer, K.rec, K.cast, K.control and K.clip.
 (() => {
   const K = window.ShareKit;
   const newSid = () => Math.random().toString(36).slice(2, 12);
@@ -55,7 +55,7 @@
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null,
       remote: { video: null, audio: null, view: null, audioEl: null, screen: false, mic: false, mode: 'one', rec: false, cast: 0 }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
       closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null, scaled: false,
-      ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null, token: null } };
+      ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, cp: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null, token: null, giveClip: false, takeClip: false, askedClip: false } };
     map.set(pub, sess);
     // the ICE config is read per session, so a Settings change applies to the next share
     sess.ready = window.api.iceConfig().then((cfg) => { if (!sess.closed) build(sess, cfg); }).catch((e) => { console.error('share session', e); close(sess, 'failed'); });
@@ -79,7 +79,7 @@
       t.onmute = () => K.paint(); t.onunmute = () => K.paint(); t.onended = () => K.paint();
       K.rec.sync(sess); K.paint();
     };
-    pc.ondatachannel = (e) => adoptChannel(sess, e.channel);
+    pc.ondatachannel = (e) => adoptChannel(sess, e.channel, true);
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') { sess.everConnected = true; clearTimeout(sess.connectTimer); sess.connectTimer = null; }
       if (pc.connectionState === 'failed') { toast(`Screen share with ${K.nameOf(sess.pub)} failed. Check the call server in Settings.`, 'err'); close(sess, 'failed'); }
@@ -240,36 +240,44 @@
   // --- data channels ----------------------------------------------------------------
   // A channel carries only the message types of its label, and a channel with any other label is left
   // alone: no handler, no slot. (A released peer reads every channel as control whatever its label, so
-  // no type it knows is ever sent under a new label.)
-  const TYPES = new Map([['ctl', new Set(['req', 'ctl', 'rel', 'cur', 'm', 'b', 'w', 'k', 'r', 'cast'])], ['move', new Set(['m'])]]);
+  // no type it knows is ever sent under a new label.) `clip` carries copied text and nothing else. The
+  // side that allowed control with the clipboard opens it; one that a peer opens while this side has
+  // no clipboard offer out to it, and none taken up, is left alone like an unknown label.
+  const TYPES = new Map([['ctl', new Set(['req', 'ctl', 'rel', 'cur', 'm', 'b', 'w', 'k', 'r', 'cast', 'clipoff'])], ['move', new Set(['m'])], ['clip', new Set(['clip'])]]);
   function onMessage(sess, types, data) {
     if (typeof data !== 'string' || data.length > K.DC_MAX) return;
     let m; try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
     sess.ctl.recv++;
     if (!types.has(m.t)) return;
-    if (m.t === 'cast') K.cast.onTold(sess, m); else K.control.onMessage(sess, m);
+    if (m.t === 'cast') K.cast.onTold(sess, m); else if (m.t === 'clip') K.clip.onPart(sess, m); else if (m.t === 'clipoff') K.clip.off(sess, 'peer'); else K.control.onMessage(sess, m);
   }
-  function adoptChannel(sess, ch) {
+  function adoptChannel(sess, ch, theirs) {
     const types = TYPES.get(ch.label);
     if (!types) return;
+    if (theirs && ch.label === 'clip' && !sess.ctl.askedClip && !sess.ctl.takeClip) return;
     ch.onmessage = (e) => onMessage(sess, types, e.data);
     ch.onerror = (e) => console.warn('channel', ch.label, e.error ? e.error.message : e);
     if (ch.label === 'ctl') ch.addEventListener('open', () => K.cast.tell(sess));   // a viewer hears how many watch as soon as it can be told
     if (ch.label === 'ctl' && !sess.ctl.dc) sess.ctl.dc = ch;
     if (ch.label === 'move' && !sess.ctl.mv) sess.ctl.mv = ch;
+    if (ch.label === 'clip') {   // one per clipboard link: the slot is free again once its channel is closing, and a channel that closes takes its link with it
+      const had = sess.ctl.cp;
+      if (!had || had.readyState === 'closing' || had.readyState === 'closed') sess.ctl.cp = ch;
+      ch.onclose = () => { if (sess.ctl.cp === ch) { sess.ctl.cp = null; K.clip.channelClosed(sess); } };
+    }
     sess.ctl.chans.push(ch);
   }
   function openChannels(sess) {   // the sharer opens them; the other side gets them through ondatachannel
     if (!sess.ctl.dc) adoptChannel(sess, sess.pc.createDataChannel('ctl'));
     if (!sess.ctl.mv) adoptChannel(sess, sess.pc.createDataChannel('move', { ordered: false, maxRetransmits: 0 }));
   }
-  function sendCtl(sess, msg, viaMove) {
-    const ch = viaMove ? sess.ctl.mv : sess.ctl.dc;
+  function sendCtl(sess, msg, label) {
+    const viaMove = label === 'move', ch = viaMove ? sess.ctl.mv : label === 'clip' ? sess.ctl.cp : sess.ctl.dc;
     if (!ch || ch.readyState !== 'open') return false;
     if (viaMove && ch.bufferedAmount > K.tune.MOVE_BUF) return false;
     try { ch.send(JSON.stringify(msg)); sess.ctl.sent++; return true; } catch { return false; }
   }
   K.sessions = { map, get: (pub) => map.get(pub) || null, all: () => [...map.values()], open, close, end, send, sendState,
-    dc: (sess, label, msg) => sendCtl(sess, msg, label === 'move'), adopt: adoptChannel, openChannels, onFrame, onStatus };
+    dc: (sess, label, msg) => sendCtl(sess, msg, label), adopt: adoptChannel, openChannels, onFrame, onStatus };
 })();

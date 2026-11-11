@@ -1,11 +1,12 @@
 #!/bin/sh
 # Screen share flow against two FRESH dev instances on CDP 9421 (Alice) / 9422 (Bob), started with
-# --use-fake-device-for-media-stream (a generated tone instead of the real microphone) and --dry-input
-# (remote control can be allowed, but no input helper starts: events are counted and dropped):
-#   ./run.sh --instance=shareA --remote-debugging-port=9421 --x=20 --y=60 --use-fake-device-for-media-stream --dry-input &
-#   ./run.sh --instance=shareB --remote-debugging-port=9422 --x=960 --y=60 --use-fake-device-for-media-stream --dry-input &
-# Steps 1e and 1f click Allow on Alice, so they run only when her main process says it is dry, or with
-# REAL_INPUT=1. Off unless asked for, because they act on this machine itself or keep a picture of its screen:
+# --use-fake-device-for-media-stream (a generated tone instead of the real microphone), --dry-input
+# (remote control can be allowed, but no input helper starts: events are counted and dropped) and
+# --clip-fake (the clipboard that control can share is a text in memory, never the system clipboard):
+#   ./run.sh --instance=shareA --remote-debugging-port=9421 --x=20 --y=60 --use-fake-device-for-media-stream --dry-input --clip-fake &
+#   ./run.sh --instance=shareB --remote-debugging-port=9422 --x=960 --y=60 --use-fake-device-for-media-stream --dry-input --clip-fake &
+# Steps 1e and 1f click Allow on Alice, so they run only when her main process says it is dry and both
+# say their clipboard is the fake one, or with REAL_INPUT=1. Off unless asked for, because they act on this machine itself or keep a picture of its screen:
 #   REAL_INPUT=1                 without --dry-input: Bob's pointer, click and keys land here, and the pointer is read back
 #   SHARE_FRAME=/path/frame.jpg  saves one frame of what Bob sees to that file
 CDP="$(cd "$(dirname "$0")" && pwd)/cdp.js"
@@ -66,6 +67,8 @@ echo "bob off:  $(B "$RECQ") second file: $REC2 ($(stat -f %z "$REC2" 2>/dev/nul
 [ "$REC1" != "$REC2" ] && echo "two distinct files: yes" || echo "two distinct files: NO"
 rm -f "$REC1" "$REC2"
 DRY=$(A "window.api.state().then(s=>s.control.dry===true)")
+FAKEQ='window.api.state().then(s=>!s.clip||s.clip.fake===true)'   # a build from before the link has no clip state and shares none
+[ "$(A "$FAKEQ")$(B "$FAKEQ")" = truetrue ] || { echo "clip.fake is not true on both instances: no click on Allow, stopping"; exit 1; }
 if [ "$DRY" = true ] || [ "$REAL_INPUT" = 1 ]; then
   echo "--- 1e. remote control: bob asks, alice allows (alice's input is dry: $DRY)"
   CTLQ='JSON.stringify({btn:document.getElementById("viewerCtl").textContent,ctl:window.Share.debug().ctl,pill:document.getElementById("sharePill").textContent,stop:!document.getElementById("btnStopCtl").classList.contains("hidden"),videoCtl:document.getElementById("viewerVideo").classList.contains("ctl")})'

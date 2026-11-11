@@ -10,6 +10,7 @@ echo "== engine";  "$ELECTRON" test/engine-test.js || exit 1
 echo "== relay";   "$ELECTRON" test/relay-test.js || exit 1
 echo "== relay+engine"; "$ELECTRON" test/relay-engine-test.js || exit 1
 echo "== control"; "$ELECTRON" test/control-test.js || exit 1
+echo "== clip";    "$ELECTRON" test/clip-test.js || exit 1
 echo "== share";   "$ELECTRON" test/share-test.js || exit 1
 echo "== theme contrast"; node test/theme-contrast.js | tail -1 || exit 1
 echo

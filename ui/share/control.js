@@ -9,10 +9,16 @@
 // request whose dialog is open; `taking` the one session whose screen I drive.
 // Control ends in two functions and nowhere else: endGive (my screen) and stopTaking (theirs).
 //
-// Reads from app.js: toast, ipcErr. Reads K.sessions, K.tune, K.cast.retier, K.viewer, K.unprompt and K.paint at call time.
+// Clipboard text can be shared for as long as control is on, when both sides said so in that one
+// handshake: the viewer offers it with its request (clip:1), the sharer ticks it in the dialog and says
+// so in the answer (clip:1). The two flags that come of it (ctl.giveClip, ctl.takeClip) are set here and
+// cleared here; the link itself is share/clip.js, which is told on every change of control (K.clip.sync).
+//
+// Reads from app.js: S, toast, ipcErr. Reads K.sessions, K.tune, K.cast.retier, K.viewer, K.clip, K.unprompt and K.paint at call time.
 (() => {
   const K = window.ShareKit;
-  const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, timer }
+  const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, clip, timer }
+  const clipOn = () => S.settings.clipboardSync !== false && !K.clip.link;   // the clipboard can be offered or taken up: my switch is on and no other session has it
   const dc = (sess, msg) => K.sessions.dc(sess, 'ctl', msg);
   // When I last said no to a contact (a Deny, or a request of theirs that was taken back or ran out). By
   // contact, not by session: ending the share and coming back in a new one must not bring the dialog
@@ -51,22 +57,34 @@
         return;
       case 'req':   // they want my mouse and keyboard. No await between these checks and the reservation.
         if (!sess.screenTrack) { dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); return; }
-        if (C.owner && C.owner.sess === sess && ctl.give === 'on') { dc(sess, { t: 'ctl', on: true }); return; }
+        if (C.owner && C.owner.sess === sess && ctl.give === 'on') { dc(sess, { t: 'ctl', on: true, clip: ctl.giveClip ? 1 : 0 }); return; }
         if ((C.pending && C.pending.sess === sess) || (C.owner && C.owner.sess === sess)) return;   // its dialog is open, or its grant is being started
         if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); once(sess, 'busy', `${name} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
         if (Date.now() - (refused.get(sess.pub) || 0) < K.DENY_COOLDOWN_MS) { dc(sess, { t: 'ctl', on: false }); return; }
-        C.pending = { sess, timer: setTimeout(() => deny('expired'), K.tune.GIVE_ASK_MS) };
-        ctl.give = 'asked';
-        K.viewer.showAsk(sess); K.paint();
+        {
+          // the dialog offers the clipboard only when they asked for it and nothing here stands against it; if not, it says why
+          const clip = m.clip === 1 && clipOn();
+          C.pending = { sess, clip, timer: setTimeout(() => deny('expired'), K.tune.GIVE_ASK_MS) };
+          ctl.give = 'asked';
+          K.viewer.showAsk(sess, { clip, why: m.clip !== 1 ? 'peer' : S.settings.clipboardSync === false ? 'off' : K.clip.link ? 'busy' : '' }); K.paint();
+        }
         return;
       case 'ctl': { // their answer about my control of their screen
-        const asked = ctl.asked;
-        clearTimeout(ctl.askTimer); ctl.asked = false;
+        const asked = ctl.asked, askedClip = ctl.askedClip;
+        clearTimeout(ctl.askTimer); ctl.asked = false; ctl.askedClip = false;
         if (m.on) {
           if (ctl.take) { /* driving already */ }
           // a yes nobody is waiting for (the request ran out, their screen is gone, or it was never asked) starts nothing
           else if (!asked || !sess.remote.screen) { dc(sess, { t: 'rel' }); once(sess, 'late', `${name} allowed control after your request ran out: ask again`); }
-          else { startTaking(sess); toast(`You control ${name}'s screen: click the video, then your mouse and keyboard act there (Esc and shortcuts too). Click outside the video to type here again.`, 'ok'); }
+          else {
+            // The clipboard comes with it only when I offered it in this request, they said yes to it, and
+            // the offer still stands here. If they said yes and it does not, they are told at once, so that
+            // their side does not go on sharing into nothing.
+            ctl.takeClip = m.clip === 1 && askedClip && clipOn();
+            if (m.clip === 1 && !ctl.takeClip) dc(sess, { t: 'clipoff' });
+            startTaking(sess);
+            toast(`You control ${name}'s screen: click the video, then your mouse and keyboard act there (Esc and shortcuts too). Click outside the video to type here again.${ctl.takeClip ? ' Clipboard text is shared both ways until control ends.' : ''}`, 'ok');
+          }
         } else {
           const was = ctl.take; stopTaking(sess);
           const why = m.why === 'accessibility' ? `${name}'s Mac has to allow P2P Chat under Accessibility first (they were shown where). Ask again once it is on.`
@@ -93,11 +111,12 @@
   async function allow() {
     const p = C.pending;
     if (!p) return;
+    const ticked = p.clip && K.viewer.clipTicked();   // the box as it stands at the click, read before the dialog goes
     clearTimeout(p.timer); C.pending = null; K.unprompt('mControl');
     const sess = p.sess, ctl = sess.ctl, name = K.nameOf(sess.pub);
     if (sess.closed || !sess.screenTrack) { ctl.give = 'off'; dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); K.paint(); return; }
     const own = C.owner = { sess, token: null };   // before the await: from here on every other request is busy
-    let r; try { r = await window.api.controlGrant(sess.pub); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
+    let r; try { r = await window.api.controlGrant(sess.pub, ticked); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
     // The grant came back for a session that closed, stopped sending my screen or gave control up
     // meanwhile: it is handed back at once, with the token it brought.
     if (C.owner !== own || sess.closed || !sess.screenTrack) {
@@ -109,10 +128,12 @@
     }
     if (r && r.ok) {
       own.token = ctl.token = r.token; ctl.give = 'on';
+      ctl.giveClip = ticked && clipOn();   // asked for, ticked, and still possible now that main has answered
       try { sess.screenTrack.contentHint = K.tune.hint(true); } catch {}
-      dc(sess, { t: 'ctl', on: true });
-      toast(`${name} now uses your mouse and keyboard. ✋ Stop control next to the Sharing pill ends it.`);
+      dc(sess, { t: 'ctl', on: true, clip: ctl.giveClip ? 1 : 0 });
+      toast(`${name} now uses your mouse and keyboard. ✋ Stop control next to the Sharing pill ends it.${ctl.giveClip ? ' Clipboard text is shared both ways.' : ''}`);
       K.cast.retier();   // whoever drives gets the full frame rate, whatever the audience
+      K.clip.sync(sess);
     } else {
       C.owner = null; ctl.give = 'off';
       dc(sess, { t: 'ctl', on: false, why: (r && r.reason) || 'helper' });
@@ -139,11 +160,12 @@
     }
     if (ctl.give === 'off' && !mine) return;
     const was = ctl.give, token = mine ? C.owner.token : null;
-    ctl.give = 'off'; ctl.token = null;
+    ctl.give = 'off'; ctl.token = null; ctl.giveClip = false;
     if (mine) C.owner = null;
     if (token) window.api.controlRevoke(token).catch(() => {});   // no token yet: allow() hands the grant back when it arrives
     if (was === 'on') { try { if (sess.screenTrack) sess.screenTrack.contentHint = K.tune.hint(false); } catch {} }
     if (!sess.closed && why !== 'released') dc(sess, { t: 'ctl', on: false, why: why === 'denied' ? undefined : why === 'expired' ? 'expired' : why === 'stopped' ? 'stopped' : 'helper' });
+    K.clip.sync(sess);   // the clipboard was shared with their control: it ends here as well
     if (was === 'on') { toast(why === 'released' ? `${K.nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' || why === 'closed' ? 'Remote control stopped' : `Remote control stopped: ${why}`); K.cast.retier(); }
     K.paint();
   }
@@ -169,25 +191,28 @@
     if (ctl.asked) return;
     const other = C.taking;
     if (other && other !== sess) { stopTaking(other); dc(other, { t: 'rel' }); }   // one screen at a time
-    if (!dc(sess, { t: 'req' })) { toast('Not connected yet: try again in a moment', 'err'); return; }
-    ctl.asked = true;
-    ctl.askTimer = setTimeout(() => { if (ctl.asked) { ctl.asked = false; if (!sess.closed) { toast(`${K.nameOf(sess.pub)} has not answered`); K.paint(); } } }, K.tune.ASK_MS);
+    const offer = clipOn();   // the request offers my clipboard too; a released peer reads no field of it
+    if (!dc(sess, offer ? { t: 'req', clip: 1 } : { t: 'req' })) { toast('Not connected yet: try again in a moment', 'err'); return; }
+    ctl.asked = true; ctl.askedClip = offer;
+    ctl.askTimer = setTimeout(() => { if (ctl.asked) { ctl.asked = false; ctl.askedClip = false; if (!sess.closed) { toast(`${K.nameOf(sess.pub)} has not answered`); K.paint(); } } }, K.tune.ASK_MS);
     K.paint();
   }
   function startTaking(sess) {
     const ctl = sess.ctl;
     ctl.take = true; C.taking = sess; ctl.move = null; ctl.moveAt = 0;
     clearTimeout(ctl.flush); ctl.flush = null;
+    K.clip.sync(sess);
     K.viewer.applyCtl();
   }
   // I stop driving their screen, or stop waiting for their answer
   function stopTaking(sess) {
     const ctl = sess.ctl;
     clearTimeout(ctl.flush); ctl.flush = null; ctl.move = null;
-    clearTimeout(ctl.askTimer); ctl.asked = false;
+    clearTimeout(ctl.askTimer); ctl.asked = false; ctl.askedClip = false;
     if (ctl.take) { ctl.take = false; if (!sess.closed) dc(sess, { t: 'r' }); }   // nothing stays pressed over there
-    ctl.cursor = null;
+    ctl.takeClip = false; ctl.cursor = null;
     if (C.taking === sess) C.taking = null;
+    K.clip.sync(sess);   // their clipboard was shared with my control of their screen: it ends here as well
     K.viewer.applyCtl();
   }
   // true while the video on screen is the screen I drive

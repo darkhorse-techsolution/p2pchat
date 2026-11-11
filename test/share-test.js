@@ -78,7 +78,7 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   const names = { a: 'Ann', b: 'Bob', c: 'Cy', d: 'Dee', e: 'Eve' }, sessions = {};
   let paints = 0;
   const K = load(['kit.js', 'tune.js', 'cast.js'], { contact: (pub) => (names[pub] ? { pub, name: names[pub] } : undefined) });
-  K.sessions = { get: (pub) => sessions[pub] || null, all: () => Object.values(sessions) }; K.control = { owner: null }; K.paint = () => { paints++; };
+  K.sessions = { get: (pub) => sessions[pub] || null, all: () => Object.values(sessions) }; K.control = { owner: null }; K.clip = { link: null }; K.paint = () => { paints++; };
   const cast = K.cast, m = cast.members, put = (pub, state) => m.set(pub, { state, mode: 'one', timer: null });
   ok('A1 nobody: count 0', cast.count() === 0 && cast.text(false) === 'Sharing your screen');
   put('b', 'live');
@@ -99,6 +99,11 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   ok('A1 where this window is in the picture the line names nobody', anon === 'Sharing your screen with 2 contacts (1 reconnecting) · controlled · recorded' && !/Ann|Bob|Cy/.test(anon));
   sessions.b.ctl.give = 'asked'; sessions.b.remote.rec = false; sessions.a.remote.rec = false;
   ok('A1 a request that is only asked is not control', cast.text(false) === 'Sharing your screen with Ann and Bob (Cy reconnecting)');
+  sessions.b.ctl.give = 'on'; K.clip.link = { sess: sessions.b, role: 'give' };
+  ok('A1 the clipboard that is shared with whoever controls', cast.text(false) === 'Sharing your screen with Ann and Bob (Cy reconnecting) · Bob controls it · clipboard shared' && cast.text(true) === 'Sharing your screen with 2 contacts (1 reconnecting) · controlled · clipboard shared');
+  K.clip.link = { sess: sessions.a, role: 'take' };
+  ok('A1 a clipboard I share as the viewer of someone else\'s screen is not in the line about mine', !/clipboard/.test(cast.text(false)));
+  sessions.b.ctl.give = 'asked'; K.clip.link = null;
   m.delete('a'); m.delete('c');
   ok('A1 one contact, anonymous', cast.text(true) === 'Sharing your screen with 1 contact');
   // the picker
@@ -170,14 +175,15 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
 // The control code (share/control.js) in a world that records what it sends, shows and asks main for.
 // Time and timers are the test's: `now` is what Date.now() gives, a timer runs only when the test fires it.
 function controlWorld() {
-  const w = { now: 1e12, sent: [], toasts: [], dialogs: [], grants: [], revoked: [], timers: [] };
-  w.K = load(['kit.js', 'tune.js', 'control.js'], { toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1) }),
+  const w = { now: 1e12, sent: [], toasts: [], dialogs: [], asks: [], grants: [], revoked: [], timers: [], synced: [], settings: {}, ticked: true };
+  w.K = load(['kit.js', 'tune.js', 'control.js'], { S: { settings: w.settings }, toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1) }),
     Date: { now: () => w.now }, setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; w.timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; },
-    api: { controlGrant: (pub) => new Promise((res) => w.grants.push({ pub, res })), controlRevoke: async (token) => { w.revoked.push(token); return true; }, input() {} } });
+    api: { controlGrant: (pub, clip) => new Promise((res) => w.grants.push({ pub, clip, res })), controlRevoke: async (token) => { w.revoked.push(token); return true; }, input() {} } });
   w.K.sessions = { dc: (sess, _label, msg) => { w.sent.push(`${sess.pub}:${JSON.stringify(msg)}`); return true; } };
-  w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess) => w.dialogs.push(sess.pub) };
+  w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess, o) => { w.dialogs.push(sess.pub); w.asks.push(o); }, clipTicked: () => w.ticked };   // the clipboard box of the dialog, as the test leaves it
+  w.K.clip = { link: null, sync: (sess) => w.synced.push(sess.pub), off() {} };
   w.K.cast = { retier() {} }; w.K.paint = () => {}; w.K.unprompt = () => {};
-  w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null } });
+  w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null, giveClip: false, takeClip: false, askedClip: false } });
   w.from = (sess, msg) => w.K.control.onMessage(sess, msg);       // a message of theirs, as the session hands it on
   return w;
 }
@@ -193,7 +199,7 @@ const tick = () => new Promise((r) => setImmediate(r));
     w.sent.length = 0; w.grants[0].res({ ok: true, token: 'stale' }); await tick();
     ok('R3 the stale grant is handed back, and the open request stays asked with nothing said to the viewer', open && w.revoked.join() === 'stale' && C.owner === null && C.pending && C.pending.sess === bob && bob.ctl.give === 'asked' && w.sent.length === 0);
     C.allow(); await tick(); w.grants[1].res({ ok: true, token: 'fresh' }); await tick();
-    ok('R3 Allow on that dialog then grants it', C.owner && C.owner.token === 'fresh' && bob.ctl.give === 'on' && w.sent.join() === 'bob:{"t":"ctl","on":true}');
+    ok('R3 Allow on that dialog then grants it', C.owner && C.owner.token === 'fresh' && bob.ctl.give === 'on' && w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":0}');
     const v = controlWorld(), D = v.K.control, cy = v.sess('cy');
     v.from(cy, { t: 'req' }); D.allow(); await tick(); v.from(cy, { t: 'rel' }); v.sent.length = 0;
     v.grants[0].res({ ok: true, token: 'stale' }); await tick();
@@ -238,7 +244,7 @@ const tick = () => new Promise((r) => setImmediate(r));
     addEventListener: (t, f) => { win[t] = f; }, setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; } });
   const run = (ms) => { for (const t of timers.splice(0)) if (t.on && t.ms <= ms) t.fn(); else if (t.on) timers.push(t); };   // fires what is due within ms, keeps the rest
   const sess = { pub: 'bobbobbobbob' }; $('mControl').classList.add('hidden');
-  K.control = { pending: { sess }, isTaking: () => false }; K.prompt = (id) => $(id).classList.remove('hidden');
+  K.control = { pending: { sess }, isTaking: () => false }; K.clip = { poke() {} }; K.prompt = (id) => $(id).classList.remove('hidden');
   K.viewer.showAsk(sess);
   const atOpen = $('controlYes').disabled; run(60); const focusAtOpen = active; run(K.ARM_MS);
   ok('R6 the dialog opens with Allow disarmed and the keyboard on Deny, and arms after K.ARM_MS', atOpen === true && focusAtOpen === 'controlNo' && $('controlYes').disabled === false && $('controlWho').textContent === '(verified, key bobbobbo)');
@@ -282,6 +288,302 @@ const tick = () => new Promise((r) => setImmediate(r));
   for (let i = 0; i < 20; i++) v.from(cy, { t: 'req' });
   v.from(dee, { t: 'req' });
   ok('R8 twenty requests of a second viewer while the first one\'s dialog is open: twenty times busy, one toast per asker', v.dialogs.join() === 'bob' && v.sent.filter((x) => x === 'cy:{"t":"ctl","on":false,"why":"busy"}').length === 20 && v.toasts.join('|') === 'Cy also asked for control|Dee also asked for control' && D.pending.sess === bob);
+}
+
+// N1: the clip channel: what may open it, what it carries, and what it may not
+{
+  const got = [], K = load(['kit.js', 'session.js']);
+  K.clip = { onPart: (sess, m) => got.push(`part:${sess.pub}:${m.i}`), off: (sess, why) => got.push(`off:${sess.pub}:${why}`), channelClosed: (sess) => got.push(`closed:${sess.pub}`) };
+  K.control = { onMessage: (sess, m) => got.push(`control:${m.t}`) }; K.cast = { onTold: () => got.push('cast'), tell() {} }; K.tune = { MOVE_BUF: 1024 };
+  const chan = (label) => ({ label, readyState: 'open', bufferedAmount: 0, out: [], send(d) { this.out.push(d); }, addEventListener() {} });
+  const mk = () => ({ pub: 'bob', ctl: { dc: null, mv: null, cp: null, chans: [], sent: 0, recv: 0, askedClip: false, takeClip: false } });
+  const say = (ch, m) => ch.onmessage({ data: typeof m === 'string' ? m : JSON.stringify(m) });
+  let sess = mk(), ch = chan('clip');
+  K.sessions.adopt(sess, ch, true);
+  ok('N1 a clip channel a peer opens while I have offered it nothing gets no handler and no slot', ch.onmessage === undefined && sess.ctl.cp === null && sess.ctl.chans.length === 0);
+  sess.ctl.askedClip = true; K.sessions.adopt(sess, ch, true);
+  ok('N1 with my offer out to that peer it is taken', typeof ch.onmessage === 'function' && sess.ctl.cp === ch);
+  sess = mk(); sess.ctl.takeClip = true; ch = chan('clip'); K.sessions.adopt(sess, ch, true);
+  ok('N1 and with the offer taken up', sess.ctl.cp === ch);
+  sess = mk(); ch = chan('clip'); K.sessions.adopt(sess, ch);
+  ok('N1 the one this side opens itself is always its own', sess.ctl.cp === ch);
+  const x = chan('x'); K.sessions.adopt(sess, x, true);
+  ok('N1 any other label is still left alone', x.onmessage === undefined);
+  const ctl = chan('ctl'), mv = chan('move'); K.sessions.adopt(sess, ctl, true); K.sessions.adopt(sess, mv, true);
+  say(ch, { t: 'clip', id: 1, i: 0, n: 1, d: 'a' });
+  ok('N1 a clip message on the clip channel reaches the link', got.join() === 'part:bob:0' && sess.ctl.recv === 1);
+  for (const m of [{ t: 'req' }, { t: 'req', clip: 1 }, { t: 'ctl', on: true, clip: 1 }, { t: 'm', x: 0.5, y: 0.5 }, { t: 'k', c: 'KeyA', d: 1 }, { t: 'clipoff' }, { t: 'cast', n: 3 }, { t: 'rel' }]) say(ch, m);
+  ok('N1 nothing else does: no request, answer, input or clipoff is read from it', got.length === 1 && sess.ctl.recv === 9);
+  say(ctl, { t: 'clip', id: 1, i: 0, n: 1, d: 'a' }); say(mv, { t: 'clip', id: 1, i: 0, n: 1, d: 'a' });
+  ok('N1 a clip message on ctl or move is dropped', got.length === 1);
+  say(ctl, { t: 'clipoff' });
+  ok('N1 clipoff on ctl ends the clipboard of that session, as the peer\'s doing', got[1] === 'off:bob:peer');
+  say(ch, 'x'.repeat(K.DC_MAX + 1)); say(ch, 'not json'); ch.onmessage({ data: new ArrayBuffer(8) });
+  ok('N1 a clip message that is too long, not JSON or not text is dropped as on any channel', got.length === 2);
+  ok('N1 text goes out on the clip channel only, and only while there is one', K.sessions.dc(sess, 'clip', { t: 'clip' }) === true && ch.out.length === 1 && ctl.out.length === 0 && mv.out.length === 0 && K.sessions.dc(mk(), 'clip', { t: 'clip' }) === false);
+  ch.readyState = 'closed';
+  ok('N1 and not on one that closed', K.sessions.dc(sess, 'clip', { t: 'clip' }) === false && ch.out.length === 1);
+  ch.readyState = 'open';
+  const second = chan('clip'); K.sessions.adopt(sess, second);
+  ok('N1 the slot is the first channel while that one is open', sess.ctl.cp === ch);
+  second.onclose();
+  ok('N1 a channel that is not the slot closes without ending anything', sess.ctl.cp === ch && got.length === 2);
+  ch.readyState = 'closed'; const third = chan('clip'); K.sessions.adopt(sess, third);
+  ok('N1 a closed one gives the slot to the next', sess.ctl.cp === third);
+  ch.onclose();
+  ok('N1 and its late close event does not end the link of the new one', sess.ctl.cp === third && got.length === 2);
+  third.onclose();
+  ok('N1 the slot\'s channel closing clears the slot and ends the link', sess.ctl.cp === null && got[2] === 'closed:bob');
+}
+
+// The clipboard link of the renderer (share/clip.js) in a world that records what it asks main for and what it sends.
+function clipWorld() {
+  const w = { sent: [], starts: [], stops: [], applied: [], pokes: [], notes: [], made: [], settings: {}, applyOk: true };
+  w.K = load(['kit.js', 'clip.js'], { S: { settings: w.settings }, api: {
+    clipStart: (o) => new Promise((res) => w.starts.push({ o, res })), clipStop: async (id) => { w.stops.push(id); return true; },
+    clipApply: async (id, text) => { w.applied.push({ id, text }); return w.applyOk; }, clipPoke: async (id) => { w.pokes.push(id); return true; } } });
+  w.K.paint = () => {}; w.K.viewer = { bound: null, clipNote: (k) => w.notes.push(k) };
+  w.K.sessions = { adopt: (sess, ch) => { sess.ctl.cp = ch; },
+    dc: (sess, label, msg) => { const ch = label === 'clip' ? sess.ctl.cp : sess.ctl.dc; if (!ch || ch.readyState !== 'open') return false; w.sent.push({ to: sess.pub, label, msg }); return true; } };
+  w.sess = (pub) => ({ pub, closed: false, pc: { createDataChannel: (label) => { const ch = { label, readyState: 'open', bufferedAmount: 0, close() { this.readyState = 'closed'; } }; w.made.push(ch); return ch; } },
+    ctl: { give: 'off', take: false, giveClip: false, takeClip: false, token: null, cp: null, dc: { readyState: 'open' } } });
+  // a session in which control with the clipboard is on, as the sharer or as the viewer, and main has answered
+  w.give = async (pub, id) => { const sess = w.sess(pub); Object.assign(sess.ctl, { give: 'on', giveClip: true, token: 'tok-' + pub }); w.K.clip.sync(sess); w.starts[w.starts.length - 1].res({ ok: true, id }); await tick(); return sess; };
+  w.take = async (pub, id) => { const sess = w.sess(pub); Object.assign(sess.ctl, { take: true, takeClip: true }); sess.ctl.cp = { label: 'clip', readyState: 'open', bufferedAmount: 0 }; w.K.clip.sync(sess); w.starts[w.starts.length - 1].res({ ok: true, id }); await tick(); return sess; };
+  w.ctlSent = () => w.sent.filter((x) => x.label === 'ctl').map((x) => `${x.to}:${JSON.stringify(x.msg)}`).join('|');
+  return w;
+}
+const waitFor = async (cond, ms = 400) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 5)); return cond(); };
+
+// X1: the link follows control, and nothing else starts it
+{
+  (async () => {
+    let w = clipWorld(), clip = w.K.clip, bob = w.sess('bob');
+    clip.sync(bob);
+    ok('X1 no control, no link: main is not asked', clip.link === null && w.starts.length === 0);
+    bob.ctl.give = 'on'; bob.ctl.token = 'tok'; clip.sync(bob);
+    ok('X1 control without the clipboard flag: no link', clip.link === null && w.starts.length === 0);
+    bob.ctl.give = 'asked'; bob.ctl.giveClip = true; clip.sync(bob);
+    ok('X1 the flag without control being on (only asked): no link', clip.link === null && w.starts.length === 0);
+    bob.ctl.give = 'on'; w.settings.clipboardSync = false; clip.sync(bob);
+    ok('X1 control and flag but my switch off: no link', clip.link === null && w.starts.length === 0);
+    w.settings.clipboardSync = true; bob.closed = true; clip.sync(bob);
+    ok('X1 a closed session: no link', clip.link === null && w.starts.length === 0);
+    bob.closed = false; clip.sync(bob);
+    ok('X1 control on with the flag: the link is there at once, the sharer opens the clip channel, main is asked with the grant token', clip.link && clip.link.sess === bob && clip.link.role === 'give' && clip.link.id === null && w.made.length === 1 && w.made[0].label === 'clip' && bob.ctl.cp === w.made[0] && js(w.starts[0].o) === '{"pub":"bob","role":"give","token":"tok"}');
+    clip.sync(bob);
+    ok('X1 a second sync starts no second link', w.starts.length === 1 && w.made.length === 1);
+    w.starts[0].res({ ok: true, id: '7' }); await tick();
+    ok('X1 main answered: the link has its id', clip.link.id === '7');
+    bob.ctl.give = 'off'; clip.sync(bob);
+    ok('X1 control ends: the link ends in main, the peer is told, the channel is closed, both flags are gone', clip.link === null && w.stops.join() === '7' && w.ctlSent() === 'bob:{"t":"clipoff"}' && w.made[0].readyState === 'closed' && bob.ctl.cp === null && bob.ctl.giveClip === false && bob.ctl.takeClip === false);
+    bob.ctl.give = 'on'; clip.sync(bob);
+    ok('X1 off is final: control on again under the old flags starts nothing', clip.link === null && w.starts.length === 1);
+
+    w = clipWorld(); clip = w.K.clip; const alice = w.sess('alice');
+    alice.ctl.take = true; clip.sync(alice);
+    ok('X1 viewer: driving without the flag starts nothing', clip.link === null);
+    alice.ctl.takeClip = true; clip.sync(alice);
+    ok('X1 viewer: driving with the flag starts a take link, opens no channel and names no token', clip.link.role === 'take' && w.made.length === 0 && js(w.starts[0].o) === '{"pub":"alice","role":"take","token":null}');
+    w.starts[0].res({ ok: true, id: '3' }); await tick();
+    alice.ctl.take = false; clip.sync(alice);
+    ok('X1 viewer: I stop driving and the link ends', clip.link === null && w.stops.join() === '3' && alice.ctl.takeClip === false);
+
+    w = clipWorld(); clip = w.K.clip; let sess = w.sess('bob'); Object.assign(sess.ctl, { give: 'on', giveClip: true, token: 't' });
+    clip.sync(sess); w.starts[0].res({ ok: false, reason: 'nogrant' }); await tick();
+    ok('X1 main says no: no link, flags gone, the peer told, the channel closed', clip.link === null && sess.ctl.giveClip === false && w.ctlSent() === 'bob:{"t":"clipoff"}' && w.made[0].readyState === 'closed' && w.stops.length === 0);
+    w = clipWorld(); clip = w.K.clip; sess = w.sess('bob'); Object.assign(sess.ctl, { give: 'on', giveClip: true, token: 't' });
+    clip.sync(sess); clip.off(sess, 'user'); w.starts[0].res({ ok: true, id: '9' }); await tick();
+    ok('X1 switched off while main was asked: what main started is stopped again', clip.link === null && w.stops.join() === '9');
+    w = clipWorld(); clip = w.K.clip; sess = w.sess('bob'); Object.assign(sess.ctl, { give: 'on', giveClip: true, token: 't' }); sess.pc.createDataChannel = () => { throw new Error('closed'); };
+    clip.sync(sess);
+    ok('X1 no channel can be opened: no link, and main is not asked', clip.link === null && w.starts.length === 0 && sess.ctl.giveClip === false);
+
+    // one link per app
+    w = clipWorld(); clip = w.K.clip; const first = await w.give('bob', '1'); const other = w.sess('cy'); Object.assign(other.ctl, { take: true, takeClip: true });
+    w.sent.length = 0; clip.sync(other);
+    ok('X1 a second session that had agreed while another has the link: told no, its flags cleared, the first link untouched', clip.link.sess === first && clip.link.id === '1' && other.ctl.takeClip === false && w.ctlSent() === 'cy:{"t":"clipoff"}' && w.starts.length === 1);
+    w.sent.length = 0; clip.off(other, 'peer'); clip.channelClosed(other); clip.onPart(other, { t: 'clip', id: 1, i: 0, n: 1, d: 'x' }); await tick();
+    ok('X1 what that other session does about a clipboard leaves the link alone', clip.link.sess === first && w.sent.length === 0 && w.applied.length === 0);
+
+    // every way it ends
+    for (const [why, tellsPeer, tellsMain] of [['user', true, true], ['setting', true, true], ['peer', false, true], ['main', true, false], ['failed', true, true]]) {
+      w = clipWorld(); clip = w.K.clip; sess = await w.give('bob', '5'); w.sent.length = 0;
+      clip.off(sess, why);
+      ok(`X1 off (${why}): link gone, flags gone, channel closed${tellsPeer ? ', peer told' : ', nothing said back to the peer'}${tellsMain ? ', main told' : ', main not asked again'}`, clip.link === null && !sess.ctl.giveClip && w.made[0].readyState === 'closed' && (w.ctlSent() === 'bob:{"t":"clipoff"}') === tellsPeer && (w.stops.join() === '5') === tellsMain);
+    }
+    w = clipWorld(); clip = w.K.clip; sess = await w.give('bob', '5'); w.sent.length = 0; sess.closed = true; clip.sync(sess);
+    ok('X1 the session closed: the link ends in main and nothing is sent into the closed session', clip.link === null && w.stops.join() === '5' && w.sent.length === 0);
+    w = clipWorld(); clip = w.K.clip; sess = await w.give('bob', '5'); w.sent.length = 0; clip.channelClosed(sess);
+    ok('X1 the clip channel closed under the link: off, as the peer\'s doing', clip.link === null && w.stops.join() === '5' && w.sent.length === 0);
+    w = clipWorld(); clip = w.K.clip; sess = await w.take('alice', '5'); w.sent.length = 0; clip.off(sess, 'user');
+    ok('X1 the viewer\'s side tells the peer and leaves the closing of the channel to the side that opened it', w.ctlSent() === 'alice:{"t":"clipoff"}' && sess.ctl.cp === null);
+  })().catch((e) => { console.log('FAIL  X1 threw:', e.stack); process.exitCode = 1; });
+}
+
+// X2: text in and out of the link
+{
+  (async () => {
+    let w = clipWorld(), clip = w.K.clip, sess = await w.give('bob', '4');
+    const parts = () => w.sent.filter((x) => x.label === 'clip').map((x) => x.msg);
+    clip.onLocal({ type: 'clip', id: '99', text: 'not my link' }); clip.onLocal({ type: 'clip', id: '4' }); clip.onLocal(null); await tick();
+    ok('X2 an event of another link, or with no text, sends nothing', parts().length === 0);
+    const long = 'a'.repeat(4096) + 'b'.repeat(4096) + 'c'.repeat(1808);
+    clip.onLocal({ type: 'clip', id: '4', text: long }); await waitFor(() => clip.link.tx === 1);
+    const p = parts();
+    ok('X2 a copied text goes out in parts of 4096 units, numbered, under one id', p.length === 3 && p.every((m, i) => m.t === 'clip' && m.i === i && m.n === 3 && m.id === p[0].id) && p.map((m) => m.d.length).join() === '4096,4096,1808' && p.map((m) => m.d).join('') === long && clip.link.tx === 1);
+    clip.onLocal({ type: 'clip', id: '4', text: 'short' }); await waitFor(() => clip.link.tx === 2);
+    ok('X2 the next text has another id and one part', parts().length === 4 && parts()[3].n === 1 && parts()[3].id !== p[0].id && parts()[3].d === 'short');
+    clip.onLocal({ type: 'clip', id: '4', text: 'x'.repeat(4096 * 16 + 1) }); await tick(); await tick();
+    ok('X2 a text of more than 16 parts is not sent at all', parts().length === 4 && clip.link.tx === 2);
+    sess.ctl.cp.bufferedAmount = 5000; clip.onLocal({ type: 'clip', id: '4', text: 'waits' }); await new Promise((r) => setTimeout(r, 60));
+    const held = parts().length; sess.ctl.cp.bufferedAmount = 0; await waitFor(() => clip.link.tx === 3);
+    ok('X2 a part goes out only when the channel has nothing queued', held === 4 && parts().length === 5 && parts()[4].d === 'waits');
+    sess.ctl.cp.bufferedAmount = 5000; clip.onLocal({ type: 'clip', id: '4', text: 'never' }); await tick(); clip.off(sess, 'user'); await new Promise((r) => setTimeout(r, 60));
+    ok('X2 a text that was waiting when the clipboard went off is not sent', parts().length === 5);
+    clip.onLocal({ type: 'clip', id: '4', text: 'after off' }); await tick();
+    ok('X2 and nothing is sent once the link is gone', parts().length === 5);
+    w = clipWorld(); clip = w.K.clip; sess = await w.give('bob', '4');
+    sess.ctl.cp.bufferedAmount = 5000; clip.onLocal({ type: 'clip', id: '4', text: 'copied under the first grant' }); await tick(); clip.off(sess, 'user');
+    Object.assign(sess.ctl, { giveClip: true, token: 'tok2' }); clip.sync(sess); w.starts[w.starts.length - 1].res({ ok: true, id: '5' }); await tick(); await new Promise((r) => setTimeout(r, 80));
+    ok('X2 nor does it go out under the next link of that session, on its new channel', clip.link && clip.link.id === '5' && w.made.length === 2 && parts().length === 0 && clip.link.tx === 0);
+    w = clipWorld(); clip = w.K.clip; sess = await w.give('bob', '4');
+    clip.onLocal({ type: 'clip', id: '4', note: 'big' }); clip.onLocal({ type: 'clip', id: '4', note: 'refused' }); clip.onLocal({ type: 'clip', id: '4', note: 'whatever' });
+    ok('X2 a copy main would not share is counted and shown, not sent', clip.link.skipped === 2 && w.notes.join() === 'big,refused' && parts().length === 0);
+    clip.onLocal({ type: 'clip', id: '4', off: true, why: 'setting' });
+    ok('X2 main ended the link: off here too, the peer told, main not asked again', clip.link === null && w.ctlSent() === 'bob:{"t":"clipoff"}' && w.stops.length === 0);
+
+    // their text
+    w = clipWorld(); clip = w.K.clip; sess = await w.take('alice', '6');
+    const part = (id, i, n, d) => clip.onPart(sess, { t: 'clip', id, i, n, d });
+    part(1, 0, 3, 'aa'); part(1, 1, 3, 'bb'); const early = w.applied.length; part(1, 2, 3, 'cc'); await tick();
+    ok('X2 their parts are put together in order and handed to main with the link id, once whole', early === 0 && js(w.applied) === '[{"id":"6","text":"aabbcc"}]' && clip.link.rx === 1);
+    w.applied.length = 0;
+    part(2, 0, 2, 'aa'); part(2, 0, 2, 'AA'); part(2, 1, 2, 'BB'); await tick();
+    ok('X2 a part 0 starts over', js(w.applied) === '[{"id":"6","text":"AABB"}]');
+    w.applied.length = 0;
+    part(3, 1, 2, 'bb'); part(4, 0, 3, 'aa'); part(4, 2, 3, 'cc'); part(4, 1, 3, 'bb'); part(5, 0, 2, 'aa'); part(6, 1, 2, 'bb'); part(7, 0, 2, 'aa'); part(7, 1, 3, 'bb'); await tick();
+    ok('X2 a part with no start, out of order, of another id or another count drops the text', w.applied.length === 0);
+    for (const m of [{ id: 8, i: 0, n: 17, d: 'a' }, { id: 8, i: 0, n: 0, d: 'a' }, { id: 8, i: 1, n: 1, d: 'a' }, { id: 8, i: -1, n: 1, d: 'a' }, { id: 8, i: 0, n: 1, d: 'x'.repeat(4097) }, { id: 8, i: 0, n: 1, d: 7 }, { id: '8', i: 0, n: 1, d: 'a' }, { id: 8, i: 0.5, n: 1, d: 'a' }, { id: 8, i: 0, n: 1 }]) clip.onPart(sess, { t: 'clip', ...m });
+    await tick();
+    ok('X2 a part that breaks a bound is dropped: 17 parts, none, an index past the count, 4097 units, no string, no integer', w.applied.length === 0);
+    w.K.CLIP_MAX = 5000; part(9, 0, 2, 'x'.repeat(4096)); part(9, 1, 2, 'x'.repeat(4096)); await tick(); w.K.CLIP_MAX = 65536;
+    ok('X2 a text that grows past the bound is dropped whole, never cut', w.applied.length === 0);
+    const stranger = w.sess('cy'); clip.onPart(stranger, { t: 'clip', id: 10, i: 0, n: 1, d: 'from someone else' }); await tick();
+    ok('X2 a part from a session that does not have the link is ignored', w.applied.length === 0);
+    const rx = clip.link.rx; w.applyOk = false; part(11, 0, 1, 'main says no'); await tick();
+    ok('X2 a text main refuses is not counted as received', w.applied.length === 1 && rx === 2 && clip.link.rx === rx);
+    w = clipWorld(); clip = w.K.clip; sess = w.sess('alice'); Object.assign(sess.ctl, { take: true, takeClip: true }); clip.sync(sess);
+    clip.onPart(sess, { t: 'clip', id: 1, i: 0, n: 1, d: 'too early' }); await tick();
+    ok('X2 nothing is taken before main has answered for the link', w.applied.length === 0);
+    clip.off(sess, 'peer'); clip.onPart(sess, { t: 'clip', id: 2, i: 0, n: 1, d: 'too late' }); await tick();
+    ok('X2 and nothing after it is off', w.applied.length === 0);
+
+    // the poke
+    w = clipWorld(); clip = w.K.clip; sess = await w.take('alice', '6');
+    clip.poke();
+    ok('X2 no poke while their screen is not the one on screen', w.pokes.length === 0);
+    w.K.viewer.bound = sess; clip.poke();
+    ok('X2 a poke with their screen on screen asks main for one look', w.pokes.join() === '6');
+    clip.off(sess, 'user'); clip.poke();
+    ok('X2 no poke without a link', w.pokes.length === 1);
+    w = clipWorld(); clip = w.K.clip; sess = await w.give('bob', '6'); w.K.viewer.bound = sess; clip.poke();
+    ok('X2 the sharer\'s side never pokes', w.pokes.length === 0);
+  })().catch((e) => { console.log('FAIL  X2 threw:', e.stack); process.exitCode = 1; });
+}
+
+// X3: the clipboard in the control handshake: offered, ticked, answered, and only then on
+{
+  (async () => {
+    // sharer
+    let w = controlWorld(), C = w.K.control, bob = w.sess('bob');
+    w.from(bob, { t: 'req', clip: 1 });
+    ok('X3 a request that offers the clipboard, my switch on: the dialog offers it', js(w.asks[0]) === '{"clip":true,"why":""}' && C.pending.clip === true);
+    C.allow(); await tick();
+    ok('X3 Allow with the box ticked asks main for a grant with the clipboard', w.grants[0].pub === 'bob' && w.grants[0].clip === true && bob.ctl.giveClip === false);
+    w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('X3 granted: the answer says clip:1, the flag is set, the link is told', w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":1}' && bob.ctl.giveClip === true && w.synced.join() === 'bob' && /Clipboard text is shared both ways\.$/.test(w.toasts[0]));
+    w.sent.length = 0; w.from(bob, { t: 'req', clip: 1 });
+    ok('X3 asked again while it is on: the same answer', w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":1}');
+    w.synced.length = 0; C.endGive(bob, 'stopped');
+    ok('X3 control ends: the flag is cleared and the link is told, after the peer was', bob.ctl.giveClip === false && w.synced.join() === 'bob' && w.sent[w.sent.length - 1] === 'bob:{"t":"ctl","on":false,"why":"stopped"}');
+
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob'); w.ticked = false;
+    w.from(bob, { t: 'req', clip: 1 }); C.allow(); await tick(); w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('X3 the box unticked: a grant without the clipboard, clip:0, no flag', w.grants[0].clip === false && w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":0}' && bob.ctl.giveClip === false && !/Clipboard/.test(w.toasts[0]));
+
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob');
+    w.from(bob, { t: 'req' }); C.allow(); await tick(); w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('X3 a request without the offer (a released peer): the dialog says so, and whatever the box holds, no clipboard', js(w.asks[0]) === '{"clip":false,"why":"peer"}' && w.grants[0].clip === false && w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":0}' && bob.ctl.giveClip === false);
+    for (const v of [true, '1', 2, {}, 0]) { const u = controlWorld(), s = u.sess('bob'); u.from(s, { t: 'req', clip: v }); ok(`X3 only clip:1 is an offer (${JSON.stringify(v)} is not)`, u.asks[0].clip === false && u.asks[0].why === 'peer'); }
+
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob'); w.settings.clipboardSync = false;
+    w.from(bob, { t: 'req', clip: 1 }); C.allow(); await tick(); w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('X3 my switch off: not offered in the dialog, which names my Settings, and not granted', js(w.asks[0]) === '{"clip":false,"why":"off"}' && w.grants[0].clip === false && bob.ctl.giveClip === false && w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":0}');
+
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob'); w.K.clip.link = { sess: {} };
+    w.from(bob, { t: 'req', clip: 1 });
+    ok('X3 the clipboard is shared in another session already: not offered, and the dialog says so', js(w.asks[0]) === '{"clip":false,"why":"busy"}');
+
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob');
+    w.from(bob, { t: 'req', clip: 1 }); C.allow(); await tick(); w.settings.clipboardSync = false; w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('X3 the switch went off while main started the grant: control yes, clipboard no', bob.ctl.give === 'on' && bob.ctl.giveClip === false && w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":0}');
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob');
+    w.from(bob, { t: 'req', clip: 1 }); C.allow(); await tick(); w.K.clip.link = { sess: {} }; w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('X3 another session took the link meanwhile: control yes, clipboard no', bob.ctl.giveClip === false && w.sent.join() === 'bob:{"t":"ctl","on":true,"clip":0}');
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob');
+    w.from(bob, { t: 'req', clip: 1 }); C.allow(); await tick(); w.grants[0].res({ ok: false, reason: 'accessibility', message: 'no' }); await tick();
+    ok('X3 a grant that fails gives no clipboard', bob.ctl.give === 'off' && bob.ctl.giveClip === false);
+    w = controlWorld(); C = w.K.control; bob = w.sess('bob');
+    w.from(bob, { t: 'req', clip: 1 }); C.deny('denied');
+    ok('X3 Deny: no grant asked, no flag', w.grants.length === 0 && bob.ctl.giveClip === false && w.sent.join() === 'bob:{"t":"ctl","on":false}');
+
+    // viewer
+    w = controlWorld(); C = w.K.control; let alice = w.sess('alice');
+    C.ask(alice);
+    ok('X3 viewer: the request offers the clipboard while my switch is on', w.sent.join() === 'alice:{"t":"req","clip":1}' && alice.ctl.askedClip === true);
+    w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: offered and answered with clip:1: I drive, the flag is set, the link is told', alice.ctl.take === true && alice.ctl.takeClip === true && alice.ctl.askedClip === false && w.synced.includes('alice') && /Clipboard text is shared both ways until control ends\.$/.test(w.toasts[0]));
+    w.synced.length = 0; w.from(alice, { t: 'ctl', on: false, why: 'stopped' });
+    ok('X3 viewer: their control ends and my flag with it', alice.ctl.take === false && alice.ctl.takeClip === false && w.synced.join() === 'alice');
+
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice); w.sent.length = 0;
+    w.from(alice, { t: 'ctl', on: true, clip: 0 });
+    ok('X3 viewer: answered without the clipboard: I drive, no flag, nothing said back', alice.ctl.take === true && alice.ctl.takeClip === false && w.sent.length === 0);
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice); w.sent.length = 0;
+    w.from(alice, { t: 'ctl', on: true });
+    ok('X3 viewer: a released sharer answers with no clip field: I drive, no flag', alice.ctl.take === true && alice.ctl.takeClip === false && w.sent.length === 0);
+
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); w.settings.clipboardSync = false; C.ask(alice);
+    ok('X3 viewer: with my switch off the request offers nothing', w.sent.join() === 'alice:{"t":"req"}' && alice.ctl.askedClip === false);
+    w.sent.length = 0; w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: a clip:1 I did not ask for is not taken up, and they are told at once', alice.ctl.take === true && alice.ctl.takeClip === false && w.sent.join() === 'alice:{"t":"clipoff"}');
+
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice); w.settings.clipboardSync = false; w.sent.length = 0;
+    w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: my switch went off between request and answer: no flag, and they are told', alice.ctl.take === true && alice.ctl.takeClip === false && w.sent.join() === 'alice:{"t":"clipoff"}');
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice); w.K.clip.link = { sess: {} }; w.sent.length = 0;
+    w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: another session took the link meanwhile: no flag, and they are told', alice.ctl.takeClip === false && w.sent.join() === 'alice:{"t":"clipoff"}');
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); w.K.clip.link = { sess: {} }; C.ask(alice);
+    ok('X3 viewer: while another session has the link the request offers nothing', w.sent.join() === 'alice:{"t":"req"}');
+    w.K.clip.link = null; w.sent.length = 0; w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: and a clip:1 in the answer to that request is not taken up though the link is free by then: I did not offer it', alice.ctl.take === true && alice.ctl.takeClip === false && w.sent.join() === 'alice:{"t":"clipoff"}');
+
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); w.sent.length = 0;
+    w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: a grant with the clipboard that nobody asked for starts neither', alice.ctl.take === false && alice.ctl.takeClip === false && w.sent.join() === 'alice:{"t":"rel"}' && w.synced.length === 0);
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice);
+    w.timers.filter((t) => t.on && t.ms === w.K.tune.ASK_MS).forEach((t) => t.fn()); w.sent.length = 0;
+    w.from(alice, { t: 'ctl', on: true, clip: 1 });
+    ok('X3 viewer: nor one that answers a request that ran out', alice.ctl.take === false && alice.ctl.takeClip === false && alice.ctl.askedClip === false && w.sent.join() === 'alice:{"t":"rel"}');
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice); w.from(alice, { t: 'ctl', on: true, clip: 1 }); w.synced.length = 0;
+    C.ask(alice);
+    ok('X3 viewer: letting go clears the flag and tells the link', alice.ctl.take === false && alice.ctl.takeClip === false && w.synced.join() === 'alice');
+    w = controlWorld(); C = w.K.control; alice = w.sess('alice'); C.ask(alice); w.from(alice, { t: 'ctl', on: true, clip: 1 }); w.synced.length = 0;
+    C.sessionClosed(alice);
+    ok('X3 a session that closes clears both flags and tells the link', alice.ctl.takeClip === false && alice.ctl.giveClip === false && w.synced.length >= 1);
+  })().catch((e) => { console.log('FAIL  X3 threw:', e.stack); process.exitCode = 1; });
 }
 
 // P1: one pop-up per incoming share, per contact

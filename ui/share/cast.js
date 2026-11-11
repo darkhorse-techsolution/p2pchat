@@ -7,7 +7,7 @@
 // K.tune.MAX_AUDIENCE of them watch the one capture; they see my screen and hear my microphone, not each other.
 //
 // Reads from app.js: toast, contact, renderContacts, window.showScreenPermission. Reads K.sessions, K.tune,
-// K.control, K.nameOf and K.paint at call time.
+// K.control, K.clip, K.nameOf and K.paint at call time.
 (() => {
   const K = window.ShareKit;
   // members: pub -> { state: 'joining' | 'live' | 'away', mode, timer, back }; adding: add() and talk() calls in flight
@@ -235,6 +235,7 @@
     return 'Sharing your screen' + (here.length ? ` with ${anon ? n(here.length) : listed(here.sort(byName))}` : '')
       + (away.length ? ` (${anon ? away.length : listed(away.sort(byName))} reconnecting)` : '')
       + (driver ? (anon ? ' · controlled' : ` · ${driver} controls it`) : '')
+      + (K.clip.link && K.clip.link.role === 'give' ? ' · clipboard shared' : '')
       + (rec.length ? (anon ? ' · recorded' : ` · ${listed(rec.sort(byName))} record${rec.length === 1 ? 's' : ''}`) : '');
   }
   // The picker's rows, by name. Ticked when it opens: the audience, or with none the open chat. `free`:

@@ -10,6 +10,7 @@ const { Engine } = require('../core/engine.js');
 const { trayIcon } = require('./icon.js');
 const { createController } = require('./input.js');
 const { createGrant } = require('./grant.js');
+const { createClipLink } = require('./clip.js');
 const { createSharePops } = require('./sharepop.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
@@ -152,7 +153,7 @@ async function loadVaultKey(dir) {
 }
 
 let engine = null, store = null, keyInfo = null, win = null, tray = null, quitting = false, hotkeyOk = false, modeHotkeyOk = false;
-const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false });
+const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true });
 // Settings added after a vault was created are read with defaults (an existing vault lacks the keys).
 const turnCfg = () => { const st = settings(); return { host: st.turn ?? DEFAULT_TURN.host, user: st.turnUser ?? DEFAULT_TURN.user, pass: st.turnPass ?? DEFAULT_TURN.pass }; };
 function iceConfig() {
@@ -408,7 +409,7 @@ handle('state', () => ({
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
-  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() },
+  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE },
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -471,25 +472,45 @@ handle('fullscreen', (_e, on) => setViewerFullscreen(on));
 // The sharer allowed the viewer to drive this machine: a helper process posts the viewer's
 // events to the OS (main/input.js). Granted to one contact at a time (main/grant.js): the
 // renderer gets a token with the grant and shows it with every event. The grant ends when the
-// sharer stops it, the capture ends, the page reloads or dies, or the app quits. The helpers
-// live outside the asar (asarUnpack).
+// sharer stops it, the capture ends, the page reloads or dies, or the app quits, and the clipboard
+// link that was allowed with it ends in the same step. The helpers live outside the asar (asarUnpack).
 const helpersDir = path.join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'main', 'helpers');
 const DRY_INPUT = !PROD && process.argv.includes('--dry-input');   // dev runs only: a grant works, but no helper starts and no event reaches the OS
 const control = createController({ log, helpersDir, screen, systemPreferences, dry: DRY_INPUT });
 const grant = createGrant({ control });
-const endGrant = (why) => grant.end(why);
-control.onExit = (why) => { const g = grant.drop(); if (g) push('control', { on: false, why, token: g.token }); };
+// The clipboard link (main/clip.js). --clip-fake is for dev runs only, like --dry-input: the link then
+// works on a text in memory and the system clipboard is never read or written. A dev run that can be
+// driven from outside (a debugging port) gets it without the flag: whatever a test clicks there, the
+// real clipboard stays out of it.
+const CLIP_FAKE = !PROD && (process.argv.includes('--clip-fake') || process.argv.some((a) => /^--(remote-debugging-port|remote-debugging-pipe|inspect)/.test(a)));
+const fakeClip = { text: '', async readText() { return this.text; }, async writeText(v) { this.text = String(v); }, async has() { return false; } };
+const clip = createClipLink({ backend: CLIP_FAKE ? fakeClip : clipboard, platform: process.platform, enabled: () => settings().clipboardSync !== false, grant });
+clip.onText = (id, text) => push('clip', { id, text });   // to the page, which sends it to the peer; never to the log
+clip.onNote = (id, note) => push('clip', { id, note });
+clip.onStop = (id, why) => { log.info('clipboard link off', id, why); push('clip', { id, off: true, why }); };
+const endGrant = (why) => { const g = grant.end(why); if (g) clip.stopFor(g.token, why); return g; };
+control.onExit = (why) => { const g = grant.drop(); if (g) { clip.stopFor(g.token, 'control ended'); push('control', { on: false, why, token: g.token }); } };
 control.onCursor = (c) => { const g = grant.current(); if (g && !g.pending) push('cursor', { ...c, token: g.token }); };   // the sharer's renderer passes it to the viewer
-handle('controlGrant', (_e, pub) => {
+handle('controlGrant', (_e, pub, withClip) => {
   pub = String(pub || '');
   if (!store.contact(pub)) throw new Error('unknown contact');
   if (!sharedDisplay) return { ok: false, reason: 'notsharing', message: 'Nothing is being shared' };
-  return grant.start(pub, screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) || sharedDisplay);
+  return grant.start(pub, screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) || sharedDisplay, withClip === true);
 });
-handle('controlRevoke', (_e, token) => { grant.revoke(token); return true; });
+handle('controlRevoke', (_e, token) => { if (grant.revoke(token)) clip.stopFor(token, 'control ended'); return true; });
 // The renderer stopped its capture: no display is shared any more, so none can be controlled.
 handle('captureEnded', () => { sharedDisplay = null; endGrant('capture ended'); return true; });
 ipcMain.on('input', (e, token, ev) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; grant.input(token, ev); });
+// The page starts the link when control with the clipboard is on in a session, and names it by the id
+// it gets back in every later call. Whether it may start, and go on, is decided in main/clip.js.
+handle('clipStart', (_e, o) => {
+  const pub = String((o && o.pub) || ''), role = o && o.role === 'give' ? 'give' : 'take';
+  if (!store.contact(pub)) throw new Error('unknown contact');
+  return clip.start({ pub, role, token: o && o.token }).then((r) => { if (r.ok) log.info('clipboard link on', r.id, role, pub.slice(0, 8), CLIP_FAKE ? '(fake clipboard)' : ''); return r; });
+});
+handle('clipPoke', (_e, id) => { clip.poke(String(id)); return true; });
+handle('clipApply', (_e, id, text) => clip.apply(String(id), text));
+handle('clipStop', (_e, id) => { if (clip.status().id === String(id)) clip.stop('renderer'); return true; });
 // Recording an incoming share: the renderer's MediaRecorder streams WebM pieces here and they
 // are appended, in order, to a plain file in the Videos folder. Deliberately not in the vault:
 // a recording is for playing in any player. Files are created exclusively and never reused.
@@ -563,11 +584,13 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
-handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); store.saveSoon(); push('settings', settings()); return settings()[key]; });
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
 // Dev builds only: lets the UI test suite resize the real window. Not registered in packaged builds.
 if (!PROD) handle('devResize', (_e, w, h) => { win.setBounds({ width: Math.max(300, Number(w) | 0), height: Math.max(250, Number(h) | 0) }); return win.getBounds(); });
+// Dev builds only, and only with the fake clipboard: the UI tests set and read the text it holds.
+if (!PROD) handle('devClip', (_e, op, text) => { if (!CLIP_FAKE) throw new Error('this run has the real clipboard: devClip needs --clip-fake'); if (op === 'set') { fakeClip.text = String(text); return true; } return fakeClip.text; });
 handle('setPopups', (_e, o) => { settings().popups = !!o.popups; settings().popupText = !!o.popupText; store.saveSoon(); return { popups: settings().popups, popupText: settings().popupText }; });
 handle('testPopup', () => { const c = store.contacts()[0]; showPopup({ pub: c?.pub || 'test', name: c?.name || 'Preview', text: 'This is how a new message pops up. It disappears in a few seconds and never takes focus.', kind: 'text', force: true }); return true; });
 handle('setRelay', (_e, address) => { engine.setRelay(address); return { relay: settings().relay || '', status: engine.relayStatus() }; });
@@ -668,7 +691,7 @@ async function boot() {
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   // a reload: the page that held the share and the grant is gone, whatever it was doing
-  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); sharedDisplay = null; } });
+  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); sharedDisplay = null; } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Everything is refused except what a screen share needs, and only for this window:
   // the display (served below without a picker) and the microphone (never the camera).
@@ -688,7 +711,7 @@ async function boot() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.on('console-message', (d) => { if (d.level === 'error' || !PROD) logLine(d.level === 'error' ? 'ERROR' : 'INFO', ['renderer', d.message, d.sourceId, d.lineNumber]); });
   win.webContents.on('preload-error', (_e, p, err) => log.error('preload', p, err));
-  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); sharedDisplay = null; if (d.reason !== 'clean-exit') win.webContents.reload(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); sharedDisplay = null; if (d.reason !== 'clean-exit') win.webContents.reload(); });
   if (isWin) win.setSkipTaskbar(true);
   log.info('window created');
   applyProtection(win);
@@ -728,7 +751,7 @@ async function boot() {
   applyMode(settings().mode || 'overlap');
 }
 
-app.on('before-quit', () => { quitting = true; control.stop('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); });
+app.on('before-quit', () => { quitting = true; clip.stop('quit'); control.stop('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); });
 app.on('will-quit', () => { if (engine) engine.stop(); });
 app.on('window-all-closed', () => { if (!BACKGROUND_APP) app.quit(); });
 app.on('activate', showWindow);

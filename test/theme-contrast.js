@@ -20,6 +20,7 @@ const PAIRS = [
   ['tk-c', 'code-bg', 4.5], ['tk-s', 'code-bg', 4.5], ['tk-n', 'code-bg', 4.5], ['tk-k', 'code-bg', 4.5], ['tk-f', 'code-bg', 4.5], ['tk-t', 'code-bg', 4.5], ['tk-l', 'code-bg', 4.5], ['tk-p', 'code-bg', 4.5], ['tk-o', 'code-bg', 4.5],
   ['text', 'code-bg', 7],
   ['bad', ['bad', 10, 'panel'], 4.5], ['bad', 'panel-2', 4.5],   // the audience bar of a screen share, and its buttons
+  ['bg', 'good', 4.5],                                           // the clipboard buttons of a control session (on-accent on good is 1.99 in the dark palette)
 ];
 let fails = 0, n = 0;
 for (const theme of ['dark', 'light']) {

@@ -3,8 +3,8 @@
 // muted), an <audio> per session for their voice, full screen, the pointer and key listeners that feed
 // remote control, and the two prompts a share can open (control of my screen, "share yours too").
 //
-// Reads from app.js: S, $, toast, contact, ipcErr. Reads K.sessions, K.tune, K.control, K.prompt and
-// K.unprompt at call time.
+// Reads from app.js: S, $, toast, contact, ipcErr. Reads K.sessions, K.tune, K.control, K.clip, K.prompt,
+// K.unprompt and K.paint at call time.
 (() => {
   const K = window.ShareKit;
   // share/control.js loads before this file, so every listener below finds K.control
@@ -53,12 +53,30 @@
     yes.disabled = true; clearTimeout(arming); arming = setTimeout(() => { yes.disabled = false; }, K.ARM_MS);
     setTimeout(() => { if (p && K.control.pending === p && !$('mControl').classList.contains('hidden')) $('controlNo').focus(); }, 60);
   }
-  function showAsk(sess) {
-    const c = contact(sess.pub);
-    $('controlName').textContent = K.nameOf(sess.pub);
+  // With `clip` the dialog also offers to share clipboard text with them, ticked, and the Allow button
+  // says so; without it a line says why the clipboard stays out of it.
+  let askClip = false;
+  const labelAsk = () => { $('controlYes').textContent = askClip && $('controlClip').checked ? 'Allow control and clipboard' : 'Allow control'; };
+  const clipTicked = () => askClip && !!$('controlClip').checked;
+  function showAsk(sess, o) {
+    const c = contact(sess.pub), name = K.nameOf(sess.pub), why = o && o.why;
+    askClip = !!(o && o.clip);
+    $('controlName').textContent = name;
     $('controlWho').textContent = `(${c && c.verified ? 'verified' : 'not verified'}, key ${sess.pub.slice(0, 8)})`;
+    $('controlClipRow').classList.toggle('hidden', !askClip); $('controlClip').checked = true; $('controlClipName').textContent = name;
+    $('controlClipNote').classList.toggle('hidden', askClip);
+    $('controlClipNote').textContent = askClip ? '' : why === 'off' ? 'Clipboard is not shared: it is switched off in your Settings.' : why === 'busy' ? 'Clipboard is not shared: it is already shared in another session.' : `Clipboard is not shared: ${name}'s app did not offer it (older version, or switched off in their Settings).`;
+    labelAsk();
     arm();
     K.prompt('mControl');
+  }
+  // A copy that could not be shared (main says which kind): the clipboard buttons say so for a moment,
+  // because a toast sits under the full-screen viewer, and one toast says why.
+  let noted = '', noteTimer = null;
+  const clipLabel = () => (noted === 'big' ? '📋 Too large' : noted ? '📋 Not shared' : '📋 Shared');
+  function clipNote(kind) {
+    noted = kind; clearTimeout(noteTimer); noteTimer = setTimeout(() => { noted = ''; K.paint(); }, 3000);
+    toast(kind === 'big' ? 'Copied text is larger than 64 KB: not shared' : 'That copied text cannot be shared', 'err');
   }
   // The moment that counts is when the dialog can be seen, not when the request came: one that arrived
   // while the window was hidden or in the background is disarmed anew, with the keyboard back on Deny,
@@ -101,7 +119,7 @@
   }
   function onFullscreen(ev) { applyTheater(!!ev.on && !!K.viewer.bound); }
 
-  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, seen, sessionClosed };
+  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, labelAsk, clipTicked, clipNote, clipLabel, seen, sessionClosed };
 
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs
@@ -125,6 +143,7 @@
     const onKey = (e) => { const sess = keysGoRemote(); if (!sess) return; e.preventDefault(); e.stopPropagation(); if (e.repeat) return; K.sessions.dc(sess, 'ctl', { t: 'k', c: e.code, d: e.type === 'keydown' ? 1 : 0 }); };
     document.addEventListener('keydown', onKey, true); document.addEventListener('keyup', onKey, true);
     window.addEventListener('blur', () => { const sess = taking(); if (sess) K.sessions.dc(sess, 'ctl', { t: 'r' }); });   // nothing stays pressed over there when this window loses the keyboard
-    window.addEventListener('focus', seen);
+    window.addEventListener('focus', () => { seen(); K.clip.poke(); });   // back in this window: what I copied elsewhere meanwhile is looked at once
+    v.addEventListener('pointerenter', () => K.clip.poke());
   }
 })();
