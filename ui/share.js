@@ -40,7 +40,9 @@
 
   function onSettings() {
     for (const sess of map.values()) { sess.recWanted = !!S.settings.recordShares; K.rec.sync(sess); if (S.current === sess.pub) K.rec.paint(sess); }
-    if (S.settings.clipboardSync === false && K.clip.link) K.clip.off(K.clip.link.sess, 'setting');   // the switch went off: the link ends on both sides, and switching it on again does not bring it back
+    // The switch went off: the link ends on both sides, and every offer of mine that is still out is withdrawn
+    // (a request sent while it was on). Switching it on again brings neither back: that takes a new request.
+    if (S.settings.clipboardSync === false) { for (const sess of map.values()) sess.ctl.askedClip = false; if (K.clip.link) K.clip.off(K.clip.link.sess, 'setting'); }
     render();
   }
 

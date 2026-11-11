@@ -37,12 +37,14 @@
     if (!r || !r.ok) { off(sess, 'failed'); return; }
     l.id = r.id; K.paint();
   }
-  // Clipboard off for this session, for good: both flags go, whatever the reason. If the link is this
+  // Clipboard off for this session, for good: both flags go, whatever the reason, and with them an offer
+  // of mine that is still out in this session (a request of my own that they have not answered yet): their
+  // yes to it must not bring back what was just switched off. If the link is this
   // session's it ends in main, the peer is told (unless it was the peer who said so) and the sharer's
   // side closes the channel. A session that had agreed but never got the link tells its peer as well.
   function off(sess, why) {
     const ctl = sess.ctl, l = clip.link, agreed = ctl.giveClip || ctl.takeClip, mine = !!l && l.sess === sess;
-    ctl.giveClip = ctl.takeClip = false;
+    ctl.giveClip = ctl.takeClip = ctl.askedClip = false;
     if (mine) {
       clip.link = null;
       if (l.id && why !== 'main') window.api.clipStop(l.id).catch(() => {});

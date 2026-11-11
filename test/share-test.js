@@ -940,6 +940,43 @@ function pageWorld(extra = {}) {
   ok('E1 and the Esc after that denies it', C.pending === null && cy.ctl.give === 'off' && sent.join() === 'cy:{"t":"ctl","on":false}' && !up('mControl') && !up('backdrop'));
 }
 
+// V1: clipboard off takes an offer of mine that is still out with it (review of stage D, HIGH 1)
+{
+  // My page in a two-way share with Alice: she drives my screen with the clipboard (my give link), and my own
+  // request to drive hers, made with the clipboard offered, has not been answered yet.
+  const world = () => {
+    const w = pageWorld(), K = w.K, api = pages.get(K).api, alice = w.sess('alice', true, true), sent = [], starts = [];
+    api.clipStart = (o) => { starts.push(o.role); return new Promise(() => {}); }; api.clipStop = async () => true; api.clipPoke = async () => true;
+    alice.ctl.dc = { readyState: 'open', send: (text) => sent.push(text) };
+    w.S.current = 'alice'; K.paint();
+    K.control.ask(alice);
+    Object.assign(alice.ctl, { give: 'on', giveClip: true, token: 'tok' }); K.control.owner = { sess: alice, token: 'tok' };
+    K.clip.link = { sess: alice, id: '1', role: 'give', tx: 0, rx: 0, skipped: 0, asm: null, sending: Promise.resolve() };
+    return { w, K, alice, sent, starts, out: alice.ctl.asked && alice.ctl.askedClip && sent.join() === '{"t":"req","clip":1}' };
+  };
+  const answered = (x) => { x.sent.length = 0; x.K.control.onMessage(x.alice, { t: 'ctl', on: true, clip: 1 }); return { take: x.alice.ctl.take, takeClip: x.alice.ctl.takeClip, link: x.K.clip.link === null ? null : x.K.clip.link.role, starts: x.starts.join(), told: x.sent.join() }; };
+  const none = '{"take":true,"takeClip":false,"link":null,"starts":"","told":"{\\"t\\":\\"clipoff\\"}"}';   // control starts, the clipboard does not, and she is told so
+  for (const id of ['btnClip', 'viewerClip']) {
+    const x = world(); x.w.$(id).onclick();
+    ok(`V1 clipboard off by #${id}: the link is gone and so is my offer that was still out`, x.out && x.K.clip.link === null && x.alice.ctl.giveClip === false && x.alice.ctl.askedClip === false);
+    ok(`V1 her Allow to that older request then gives me control without the clipboard (#${id})`, js(answered(x)) === none);
+  }
+  let x = world(); x.w.S.settings.clipboardSync = false; x.w.Share.onSettings(); x.w.S.settings.clipboardSync = true; x.w.Share.onSettings();
+  ok('V1 the Settings switch off and on again: the same', x.out && x.alice.ctl.askedClip === false && js(answered(x)) === none);
+  // an offer in a session that has no link: only the switch can withdraw it
+  x = world(); const bob = x.w.sess('bob', false, true); bob.ctl.dc = { readyState: 'open', send() {} };
+  x.K.clip.link = null; x.alice.ctl.giveClip = false; x.alice.ctl.give = 'off'; x.K.control.owner = null;
+  x.w.S.current = 'bob'; x.K.paint(); x.K.control.ask(bob);
+  const offered = bob.ctl.askedClip === true;
+  x.w.S.settings.clipboardSync = false; x.w.Share.onSettings(); x.w.S.settings.clipboardSync = true; x.w.Share.onSettings();
+  x.K.control.onMessage(bob, { t: 'ctl', on: true, clip: 1 });
+  ok('V1 an offer sent before the switch went off is not taken up after it is on again, in a session without a link either', offered && bob.ctl.askedClip === false && bob.ctl.take === true && bob.ctl.takeClip === false && x.K.clip.link === null && x.starts.join() === '');
+  x = world(); const cy = x.w.sess('cy', false, true); cy.ctl.dc = { readyState: 'open', send() {} };
+  x.K.clip.link = null; x.alice.ctl.giveClip = false; x.alice.ctl.give = 'off'; x.K.control.owner = null;
+  x.w.S.current = 'cy'; x.K.paint(); x.K.control.ask(cy); x.K.control.onMessage(cy, { t: 'ctl', on: true, clip: 1 });
+  ok('V1 an offer that nothing withdrew is taken up as before', cy.ctl.take === true && cy.ctl.takeClip === true && x.K.clip.link && x.K.clip.link.sess === cy && x.K.clip.link.role === 'take' && x.starts.join() === 'take');
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
