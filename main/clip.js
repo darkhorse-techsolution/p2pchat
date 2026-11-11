@@ -23,7 +23,7 @@ const norm = (t) => String(t == null ? '' : t).replace(/\r\n?/g, '\n');
 
 // enabled(): the Settings switch. grant: { clipOk(pub, token), clipSpent(token) }.
 function createClipLink({ backend, platform, enabled, grant }) {
-  let link = null, seq = 0, chain = Promise.resolve();   // link: { id, pub, role, token, last, peer, timer, queued }
+  let link = null, seq = 0, chain = Promise.resolve();   // link: { id, pub, role, token, last, peer, timer, queued, next }; next: the one text of the peer that waits to be written
   const api = { onText: null, onNote: null, onStop: null };
   const run = (fn) => { const p = chain.then(fn); chain = p.catch(() => {}); return p; };
   const may = (l) => enabled() && (l.role !== 'give' || grant.clipOk(l.pub, l.token));
@@ -50,7 +50,7 @@ function createClipLink({ backend, platform, enabled, grant }) {
     if (!enabled()) return Promise.resolve({ ok: false, reason: 'off' });
     if (role === 'give' && !grant.clipOk(pub, token)) return Promise.resolve({ ok: false, reason: 'nogrant' });
     if (link) { if (role === 'give') grant.clipSpent(token); return Promise.resolve({ ok: false, reason: 'busy' }); }
-    const l = link = { id: String(++seq), pub, role, token: role === 'give' ? token : null, last: null, peer: null, timer: null, queued: false };
+    const l = link = { id: String(++seq), pub, role, token: role === 'give' ? token : null, last: null, peer: null, timer: null, queued: false, next: null };
     return run(async () => {
       let t = null;
       if (await concealed()) t = '';
@@ -93,19 +93,28 @@ function createClipLink({ backend, platform, enabled, grant }) {
   // Remembered only once it is written: a write that throws leaves `last` as it was, so the text that is
   // still on the clipboard (it can be the one from before the link) is not taken for a new copy. And
   // nothing is read back for a link that stopped while the write was under way.
+  // At most one text waits per link. While a write waits its turn (the clipboard is slow, or the peer
+  // sends texts faster than it takes them), a newer text takes its place and the one before it is
+  // answered no: nothing piles up here, whatever an allowed peer sends, and nothing is written after a stop.
   function apply(id, text) {
-    return run(async () => {
-      const l = link;
-      if (!l || l.id !== id || typeof text !== 'string' || !text || text.includes('\0') || Buffer.byteLength(text) > MAX_BYTES) return false;
-      if (!may(l)) { stop('not allowed'); return false; }
-      const t = norm(text);
-      if (t === l.last) { l.peer = t; return true; }
-      await backend.writeText(text);
-      if (link !== l) return true;
-      l.peer = l.last = t;
-      try { if (!(await concealed()) && link === l) { const now = norm(await backend.readText()); if (link === l) l.last = now; } } catch {}
-      return true;
+    const l = link;
+    if (!l || l.id !== id || typeof text !== 'string' || !text || text.includes('\0') || Buffer.byteLength(text) > MAX_BYTES) return Promise.resolve(false);
+    return new Promise((resolve, reject) => {
+      const waiting = l.next; l.next = { text, resolve, reject };
+      if (waiting) { waiting.resolve(false); return; }   // the turn it had on the chain is this text's now
+      run(async () => { const n = l.next; l.next = null; try { n.resolve(await put(l, n.text)); } catch (e) { n.reject(e); } });
     });
+  }
+  async function put(l, text) {
+    if (link !== l) return false;
+    if (!may(l)) { stop('not allowed'); return false; }
+    const t = norm(text);
+    if (t === l.last) { l.peer = t; return true; }
+    await backend.writeText(text);
+    if (link !== l) return true;
+    l.peer = l.last = t;
+    try { if (!(await concealed()) && link === l) { const now = norm(await backend.readText()); if (link === l) l.last = now; } } catch {}
+    return true;
   }
 
   const stopFor = (token, why) => (!!link && link.role === 'give' && link.token === token ? stop(why) : false);

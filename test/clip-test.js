@@ -233,5 +233,22 @@ const DISPLAY = { id: 1 };
   ok('V6 once the question is answered again, a new copy is sent', m.texts.join() === `${r.id}:asked again`);
   m.clip.stop('test');
 
+  // V10: at most one text of the peer waits to be written; a newer one takes its place (review of stage D, LOW 8)
+  m = machine(); m.text = 'x'; r = await m.clip.start({ pub: 'bob', role: 'take' });
+  let free; const write10 = m.backend.writeText; m.backend.writeText = (v) => new Promise((res) => { free = () => res(write10(v)); });   // a slow clipboard: the first write does not come back
+  const first = m.clip.apply(r.id, 'first'); await settle();
+  let no = 0, yes = 0; const flood = [];
+  for (let k = 0; k < 4000; k++) { const p10 = m.clip.apply(r.id, 'flood ' + k); p10.then((v) => { if (v) yes++; else no++; }); flood.push(p10); }
+  await settle();
+  ok('V10 one write is under way and 4000 texts follow: only the newest waits, the 3999 before it are answered no at once', no === 3999 && yes === 0 && m.writes === 0);
+  m.backend.writeText = write10; free(); await settle(); await settle();
+  ok('V10 the write under way ends and the newest text is written after it: two writes in all', (await first) === true && (await flood[3999]) === true && m.writes === 2 && m.text === 'flood 3999');
+  m.clip.poke(r.id); await settle();
+  ok('V10 and it is not sent back', m.texts.length === 0);
+  m.backend.writeText = (v) => new Promise((res) => { free = () => res(write10(v)); });
+  const held10 = m.clip.apply(r.id, 'under way'); await settle(); const waits = m.clip.apply(r.id, 'waits'); await settle();
+  m.clip.stop('renderer'); m.backend.writeText = write10; free(); await settle();
+  ok('V10 a text that still waited when the link stopped is not written', (await waits) === false && (await held10) === true && m.text === 'under way' && m.writes === 3);
+
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.log('FAIL  harness threw:', e.stack); process.exit(1); });
