@@ -117,7 +117,12 @@
   // Deny, the dialog ran out, ✋, they released it, the share stopped, the session closed, the helper died.
   function endGive(sess, why) {
     const ctl = sess.ctl, mine = !!C.owner && C.owner.sess === sess;
-    if (C.pending && C.pending.sess === sess) { clearTimeout(C.pending.timer); C.pending = null; K.unprompt('mControl'); }
+    if (C.pending && C.pending.sess === sess) {
+      clearTimeout(C.pending.timer); C.pending = null; K.unprompt('mControl');
+      // A request they took back, or that ran out, counts like a Deny for the cooldown: asking and letting
+      // go in a row would bring the dialog up again each time, over whatever I have open.
+      if (why === 'released' || why === 'expired') ctl.deniedAt = Date.now();
+    }
     if (ctl.give === 'off' && !mine) return;
     const was = ctl.give, token = mine ? C.owner.token : null;
     ctl.give = 'off'; ctl.token = null;
