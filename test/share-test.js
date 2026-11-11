@@ -133,7 +133,7 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   ok('A1 a viewer keeps the count it is told only when it is a whole number from 0 to 16', three === 3 && top === 16 && bad.every((n) => n === 0) && paints === 9);
 }
 
-// L1: the capture stops with its last lease, also when that lease goes while a microphone is being started
+// L1: the capture stops with its last lease, also when that lease goes while a microphone is being started (the microphone call does not hold the screen)
 {
   let answerMic = null, ended = 0;
   const made = [], track = (kind) => { const t = { kind, enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; }, clone: () => track(kind), applyConstraints: async () => {} }; made.push(t); return t; };
@@ -148,9 +148,9 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
     const talking = K.cast.talk(sess);                       // the microphone button: its start waits on the device
     await new Promise((r) => setTimeout(r, 5));
     K.capture.release(sess); sess.screenTrack = null; sess.closed = true; K.capture.settle();   // the share ends meanwhile
-    ok('L1 a capture whose last lease went during a microphone start is not stopped under that call', live === true && K.cast.adding === 1 && K.capture.state === 'live' && K.capture.leases.size === 0);
+    ok('L1 a capture whose last lease went during a microphone start stops then: that call waits for the microphone, not for the screen', live === true && K.cast.adding === 1 && K.capture.state === 'idle' && K.capture.leases.size === 0 && ended === 1);
     answerMic(); await talking;
-    ok('L1 and is stopped when the call ends: no device left on, main told once', K.cast.adding === 0 && K.capture.state === 'idle' && K.mic.state === 'idle' && ended === 1 && made.length === 3 && made.every((t) => t.readyState === 'ended'));
+    ok('L1 and when the call ends no device is left on, main told once', K.cast.adding === 0 && K.capture.state === 'idle' && K.mic.state === 'idle' && ended === 1 && made.length === 3 && made.every((t) => t.readyState === 'ended'));
   })().catch((e) => { console.log('FAIL  L1 threw:', e.stack); process.exitCode = 1; });
 }
 
@@ -806,6 +806,30 @@ function pageWorld(extra = {}) {
       ok(`F4 ${capturable ? 'hushed: a share that does not connect or fails names nobody' : 'not hushed: those two toasts name the contact'}`, x.toasts.join(' | ') === want);
     }
   })().catch((e) => { console.log('FAIL  F4 threw:', e.stack); process.exitCode = 1; });
+}
+
+// F5: the capture is held for an add() only until it has its lease, not while it waits on the microphone
+{
+  (async () => {
+    let w = castWorld(), cast = w.K.cast, open; w.micGate = new Promise((r) => { open = r; });   // the first share ever: the OS asks about the microphone and nobody answers
+    const adding = cast.add('bob', 'one'); await idle();
+    const mid = `${w.K.capture.state},${w.K.mic.state},${cast.adding},${cast.leasing},${!!w.held.get('bob').screenTrack}`;
+    cast.remove('bob'); await idle();
+    ok('F5 Stop sharing while the microphone prompt is open: the capture stops at once, main is told', mid === 'live,starting,1,0,true' && w.K.capture.state === 'idle' && w.ended === 1 && w.made.filter((t) => t.kind === 'video').every((t) => t.readyState === 'ended'));
+    ok('F5 the microphone start is still that call\'s, and held for it', w.K.mic.state === 'starting' && cast.adding === 1);
+    open(); const r = await adding; await idle();
+    ok('F5 when the prompt is answered the call ends with nothing left on', r === false && cast.adding === 0 && cast.leasing === 0 && w.K.mic.state === 'idle' && w.made.every((t) => t.readyState === 'ended') && cast.members.size === 0);
+
+    w = castWorld(); cast = w.K.cast; await cast.add('cy', 'one');
+    const bob = w.mk('bob'); let go; bob.ready = new Promise((res) => { go = res; });
+    const second = cast.add('bob', 'one'); await idle(); cast.remove('cy'); await idle();
+    ok('F5 an add() that has not taken its lease yet still holds the capture when the only other viewer leaves', cast.leasing === 1 && w.K.capture.state === 'live' && w.K.capture.leases.size === 0);
+    go(); const r2 = await second;
+    ok('F5 and gets its lease from that same capture', r2 === true && w.gdm === 1 && cast.leasing === 0 && w.K.capture.leases.size === 1 && cast.members.get('bob').state === 'live');
+    w = castWorld(); cast = w.K.cast; const dee = w.mk('dee'); let free; dee.ready = new Promise((res) => { free = res; });
+    const third = cast.add('dee', 'one'); await idle(); cast.remove('dee'); free(); const r3 = await third; await idle();
+    ok('F5 an add() that gives up before its lease lets go of the capture as well', r3 === false && cast.leasing === 0 && cast.adding === 0 && w.K.capture.state === 'idle');
+  })().catch((e) => { console.log('FAIL  F5 threw:', e.stack); process.exitCode = 1; });
 }
 
 // P1: one pop-up per incoming share, per contact

@@ -10,15 +10,16 @@
 // K.control, K.clip, K.nameOf and K.paint at call time.
 (() => {
   const K = window.ShareKit;
-  // members: pub -> { state: 'joining' | 'live' | 'away', mode, timer, back }; adding: add() and talk() calls in flight
-  const cast = K.cast = { members: new Map(), adding: 0 };
+  // members: pub -> { state: 'joining' | 'live' | 'away', mode, timer, back }; adding: add() and talk() calls in flight;
+  // leasing: the add() calls among them that have not taken their lease of the capture yet
+  const cast = K.cast = { members: new Map(), adding: 0, leasing: 0 };
   const drop = (pub) => { const m = cast.members.get(pub); if (m) { clearTimeout(m.timer); clearTimeout(m.back); cast.members.delete(pub); } };
 
   // --- the two devices ---------------------------------------------------------------
   // Starting a device takes several awaits (the permission, then the device), so every call that arrives
   // while one start runs waits for that same start: one click or ten, one capture. `open` resolves to
   // { track }, or to { err }: the text each caller that is not quiet shows, '' when the user was told already.
-  function source(open, stopped) {
+  function source(open, stopped, held) {
     const o = { state: 'idle', src: null, pending: null, leases: new Map() };
     o.acquire = async (quiet) => {
       if (o.state === 'live') return true;
@@ -37,9 +38,8 @@
       return t;
     };
     o.release = (sess) => { const t = o.leases.get(sess); if (t) { o.leases.delete(sess); t.stop(); } };
-    // Not while a share or a microphone is being started: that call has not taken its lease yet and
-    // would find the device gone.
-    o.settle = () => { if (o.state === 'live' && o.leases.size === 0 && cast.adding === 0) o.stopSrc(); };
+    // Not while a call is on its way to a lease of this device (`held`): it would find the device gone.
+    o.settle = () => { if (o.state === 'live' && o.leases.size === 0 && !held()) o.stopSrc(); };
     o.stopSrc = () => { const t = o.src; if (!t) return; t.onended = null; t.stop(); o.src = null; o.state = 'idle'; if (stopped) stopped(); };   // stop() fires no `ended`, so nothing waits for one
     return o;
   }
@@ -56,12 +56,12 @@
   }, () => {
     for (const pub of [...cast.members.keys()]) drop(pub);
     window.api.captureEnded().catch(() => {});           // main forgets the shared display, and with it any control of it
-  });
+  }, () => cast.leasing > 0);   // held only for an add() that has not taken its lease: one that waits on the microphone (a permission prompt can stay open for minutes) holds the microphone, not the screen
   const mic = K.mic = source(async () => {
     if (!(await window.api.micPermission())) return { err: 'Microphone access was not allowed; sharing without sound' };
     try { return { track: (await navigator.mediaDevices.getUserMedia(K.tune.micConstraints())).getAudioTracks()[0] }; }
     catch (e) { return { err: `Microphone: ${e.message}` }; }
-  });
+  }, null, () => cast.adding > 0);
   mic.audienceOn = true;   // the microphone is one switch for everyone who gets my screen; a session where I only watch has its own
 
   // --- the audience ------------------------------------------------------------------
@@ -106,8 +106,9 @@
     const fresh = !K.sessions.get(pub), sess = K.sessions.get(pub) || K.sessions.open(pub, null, false);
     if (!sess) { toast('Too many screen shares at once', 'err'); return false; }
     const me = { state: 'joining', mode, timer: null, back: null };
-    drop(pub); cast.members.set(pub, me); cast.adding++;
+    drop(pub); cast.members.set(pub, me); cast.adding++; cast.leasing++;
     const gone = () => sess.closed || cast.members.get(pub) !== me;
+    let leased = false; const took = () => { if (!leased) { leased = true; cast.leasing--; } };   // this call no longer holds the capture: it has its lease, or it gave up
     try {
       const ok = await capture.acquire();
       await sess.ready;
@@ -120,7 +121,7 @@
       }
       sess.mode = mode || sess.mode;
       const hadMic = !!sess.micTrack;                         // a microphone this session has from before: I talked to them while watching
-      const t = capture.lease(sess);
+      const t = capture.lease(sess); took();
       t.contentHint = K.tune.hint(false);
       sess.screenTrack = t; sess.local.addTrack(t);
       K.sessions.openChannels(sess);                          // in the same task as addTrack: one negotiation covers both
@@ -150,7 +151,7 @@
       retier(); tell();
       K.paint(); renderContacts();
       return true;
-    } finally { cast.adding--; capture.settle(); mic.settle(); }
+    } finally { took(); cast.adding--; capture.settle(); mic.settle(); }
   }
 
   // Stop sending my screen to this contact. The session stays while they still send something.
