@@ -62,7 +62,8 @@
   async function sender(sess, t) {
     const snd = sess.screenSender;
     if (!snd || !sess.screenTrack) return;
-    const w = sess.screenTrack.getSettings().width || 0, scale = w > t.maxW ? w / t.maxW : 1, enc = encoding(t);
+    // A width only a few percent over the tier's is sent as it is: resampling 1932 px to 1920 saves nothing and softens text.
+    const w = sess.screenTrack.getSettings().width || 0, scale = w > t.maxW * 1.05 ? w / t.maxW : 1, enc = encoding(t);
     if (scale > 1 || sess.scaled) { enc.scaleResolutionDownBy = scale; sess.scaled = true; }
     const turn = sess.capTurn = (sess.capTurn || 0) + 1;
     for (let tries = 3; tries > 0; tries--) {

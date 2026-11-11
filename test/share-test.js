@@ -55,6 +55,8 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
     const a = fake(1920);
     ok('T1 sender: a one-viewer share gets exactly the two values, in the parameters it read', await run(a, t.tier(1, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30}]}' && a.scaled === false);
     ok('T1 sender: a clone as wide as the tier allows is not scaled', await run(a, t.tier(4, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":4000000,"maxFramerate":15}]}' && a.scaled === false);
+    const near = fake(1932);
+    ok('T1 sender: a clone a few percent wider than the tier is not resampled', await run(near, t.tier(4, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":4000000,"maxFramerate":15}]}' && near.scaled === false);
     const b = fake(2560);
     ok('T1 sender: a wider one is scaled down to the tier, by its own width', await run(b, t.tier(3, false)) === `{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":15,"scaleResolutionDownBy":${2560 / 1920}}]}` && b.scaled === true);
     ok('T1 sender: back at two viewers the scaling is taken off again (the key stays, at 1)', await run(b, t.tier(2, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30,"scaleResolutionDownBy":1}]}');
