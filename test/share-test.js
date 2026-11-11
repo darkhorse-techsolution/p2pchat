@@ -628,6 +628,32 @@ const waitFor = async (cond, ms = 400) => { const t0 = Date.now(); while (!cond(
   ok('Y2 the session closes: looked at again', w.keys > k3);
 }
 
+// F1: a contact that is removed from the contact list is out of the audience for good
+{
+  const ended = [], timers = [], added = [], held = new Map();
+  const K = load(['kit.js', 'tune.js', 'cast.js'], { toast() {}, renderContacts() {}, contact: (pub) => { added.push(pub); return { pub, name: pub, status: 'online' }; },
+    setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; } });
+  K.paint = () => {}; K.control = { owner: null }; K.clip = { link: null };
+  K.sessions = { get: (pub) => held.get(pub) || null, all: () => [...held.values()], end: (x) => { ended.push(x.pub); held.delete(x.pub); x.closed = true; K.cast.sessionClosed(x, 'ended'); } };
+  const cast = K.cast, forget = cast.forget || (() => {}), mk = (pub) => { const x = { pub, closed: false, screenTrack: null, micTrack: null }; held.set(pub, x); return x; };
+  cast.members.set('live', { state: 'live', mode: 'one', timer: null, back: null }); mk('live');
+  cast.members.set('joining', { state: 'joining', mode: 'one', timer: null, back: null }); mk('joining');
+  const timer = () => { const t = { fn() {}, ms: K.REJOIN_MS, on: true }; timers.push(t); return t; };   // the timer an away entry has, as sessionClosed sets it
+  cast.members.set('away', { state: 'away', mode: 'one', timer: timer(), back: null });
+  cast.members.set('back', { state: 'away', mode: 'one', timer: timer(), back: null });
+  cast.peerOnline('back');                                      // it is connected again: its screen comes back in K.BACK_MS
+  mk('watched');                                                // a contact whose screen I only watch
+  for (const pub of ['live', 'joining', 'away', 'back', 'watched', 'nobody']) forget(pub);
+  ok('F1 forgotten in every state: no member left, whether watching, being added, away or about to come back', cast.members.size === 0);
+  ok('F1 every session with such a contact is ended, the one where I only watch too', ended.sort().join() === 'joining,live,watched' && held.size === 0);
+  ok('F1 the timers of the away entries are cleared', timers.length === 3 && timers.every((t) => !t.on));
+  added.length = 0; for (const t of timers.filter((x) => x.on)) t.fn(); cast.peerOnline('away'); cast.peerOnline('back'); cast.peerOnline('live');
+  for (const t of timers.slice(3)) t.fn();
+  ok('F1 and nothing adds that key again when it connects once more', cast.members.size === 0 && added.length === 0 && timers.length === 3);
+  const app = fs.readFileSync(path.join(__dirname, '..', 'ui', 'app.js'), 'utf8'), rm = app.slice(app.indexOf("$('infoRemove').onclick"));
+  ok('F1 the Remove button tells the share code before the contact is removed', rm.indexOf('window.Share.forget(S.current)') > 0 && rm.indexOf('window.Share.forget(S.current)') < rm.indexOf('window.api.removeContact(S.current)'));
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

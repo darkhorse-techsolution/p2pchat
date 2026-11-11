@@ -153,6 +153,6 @@
     });
     return out;
   }
-  window.Share = { onFrame: (ev) => K.sessions.onFrame(ev), onStatus: (ev) => K.sessions.onStatus(ev), onSettings, onFullscreen: (ev) => K.viewer.onFullscreen(ev), onControl: (ev) => K.control.onHelper(ev), onCursor: (c) => K.control.onCursor(c), onClip: (ev) => K.clip.onLocal(ev), onShown: () => K.viewer.seen(), render, end: () => { const sess = cur(); if (sess) K.sessions.end(sess); }, setFull: (on) => K.viewer.setFull(on), sessionPub, live, active: () => map.size > 0, lastRecording: () => K.rec.last, debug, debugAll, audio,
+  window.Share = { onFrame: (ev) => K.sessions.onFrame(ev), onStatus: (ev) => K.sessions.onStatus(ev), onSettings, onFullscreen: (ev) => K.viewer.onFullscreen(ev), onControl: (ev) => K.control.onHelper(ev), onCursor: (c) => K.control.onCursor(c), onClip: (ev) => K.clip.onLocal(ev), onShown: () => K.viewer.seen(), render, end: () => { const sess = cur(); if (sess) K.sessions.end(sess); }, forget: (pub) => K.cast.forget(pub), setFull: (on) => K.viewer.setFull(on), sessionPub, live, active: () => map.size > 0, lastRecording: () => K.rec.last, debug, debugAll, audio,
     inject: (m) => (K.control.isTaking() ? K.sessions.dc(K.viewer.bound, m && m.t === 'm' ? 'move' : 'ctl', m) : false) };   // test hook: send one control message as the viewer's input would
 })();

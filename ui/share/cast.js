@@ -221,6 +221,20 @@
     }, K.BACK_MS);
   }
 
+  // The user removes this contact from the contact list. It leaves the audience in whatever state it is
+  // (watching, being added, away, about to be added again) and every session with it ends, also one
+  // where I only watch: with the session go control, a request that is still open and the clipboard.
+  // Without this the removal looks like a viewer that dropped out, and a contact that connects again
+  // inside the minute would be given the screen again with no click.
+  function forget(pub) {
+    drop(pub);                                   // an add() that is in flight finds its entry gone and stops there
+    const sess = K.sessions.get(pub);
+    if (sess) K.sessions.end(sess);
+    capture.settle(); mic.settle();
+    retier(); tell();
+    K.paint(); renderContacts();
+  }
+
   // --- the audience, in words and as a list ---------------------------------------------------
   const byName = (a, b) => a.localeCompare(b);
   const listed = (names) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] || '');
@@ -248,5 +262,5 @@
   // a box that takes no tick: not free, or the audience is full with `n` ticked
   const locked = (free, ticked, n) => !ticked && (!free || n >= K.tune.MAX_AUDIENCE);
 
-  Object.assign(cast, { add, attachMic, detach, remove, set, stop, talk, retier, tell, onTold, sessionClosed, peerOnline, text, rows, locked });
+  Object.assign(cast, { add, attachMic, detach, remove, set, stop, talk, retier, tell, onTold, sessionClosed, peerOnline, forget, text, rows, locked });
 })();

@@ -306,7 +306,7 @@ $('btnInfo').onclick = openInfo; $('btnMore').onclick = openInfo;
 $('infoVerified').onchange = async (e) => { await window.api.setVerified(S.current, e.target.checked); };
 $('infoRename').onchange = async (e) => { if (e.target.value.trim()) await window.api.renameContact(S.current, e.target.value.trim()); };
 $('infoHistory').onclick = async () => { try { await window.api.requestHistory(S.current); toast('Asked peer for their copy of the conversation'); close(); } catch (e) { toast(ipcErr(e), 'err'); } };
-$('infoRemove').onclick = async () => { if (!confirm('Remove this contact and delete the conversation from this device?')) return; await window.api.removeContact(S.current); S.current = null; close(); $('chat').classList.add('hidden'); $('empty').classList.remove('hidden'); await refreshState(); };
+$('infoRemove').onclick = async () => { if (!confirm('Remove this contact and delete the conversation from this device?')) return; if (window.Share) window.Share.forget(S.current); await window.api.removeContact(S.current); S.current = null; close(); $('chat').classList.add('hidden'); $('empty').classList.remove('hidden'); await refreshState(); };
 
 // ---------- settings ----------
 function renderSettings() {
