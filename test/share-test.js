@@ -266,6 +266,24 @@ const tick = () => new Promise((r) => setImmediate(r));
   ok('R7 ten seconds after the Deny the first contact gets the dialog again', w.dialogs.join() === 'bob,cy,bob' && C.pending.sess === again);
 }
 
+// R8: what a peer can trigger without being asked is said once per session in a cooldown
+{
+  const w = controlWorld(), C = w.K.control, alice = w.sess('alice');
+  for (let i = 0; i < 20; i++) w.from(alice, { t: 'ctl', on: true });     // I watch Alice and never asked
+  ok('R8 twenty grants nobody asked for: none taken, each handed back, one toast', alice.ctl.take === false && C.taking === null && w.sent.length === 20 && w.sent.every((x) => x === 'alice:{"t":"rel"}') && w.toasts.join() === 'Alice allowed control after your request ran out: ask again');
+  for (let i = 0; i < 20; i++) w.from(alice, { t: 'ctl', on: false });
+  ok('R8 twenty refusals of nothing: one toast more', w.toasts.length === 2 && w.toasts[1] === 'Alice did not allow control');
+  w.K.viewer.bound = alice; w.sent.length = 0; C.ask(alice); w.from(alice, { t: 'ctl', on: false, why: 'busy' }); C.ask(alice); w.from(alice, { t: 'ctl', on: false });
+  ok('R8 an answer to a request I did make is always shown', w.toasts.slice(2).join('|') === "Alice's screen is being controlled by someone else|Alice did not allow control" && alice.ctl.asked === false);
+  w.now += w.K.DENY_COOLDOWN_MS + 1; w.from(alice, { t: 'ctl', on: true }); w.from(alice, { t: 'ctl', on: true });
+  ok('R8 after the cooldown the next unasked one is said again, once', w.toasts.length === 5);
+  const v = controlWorld(), D = v.K.control, bob = v.sess('bob'), cy = v.sess('cy'), dee = v.sess('dee');
+  v.from(bob, { t: 'req' });
+  for (let i = 0; i < 20; i++) v.from(cy, { t: 'req' });
+  v.from(dee, { t: 'req' });
+  ok('R8 twenty requests of a second viewer while the first one\'s dialog is open: twenty times busy, one toast per asker', v.dialogs.join() === 'bob' && v.sent.filter((x) => x === 'cy:{"t":"ctl","on":false,"why":"busy"}').length === 20 && v.toasts.join('|') === 'Cy also asked for control|Dee also asked for control' && D.pending.sess === bob);
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

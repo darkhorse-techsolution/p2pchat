@@ -18,6 +18,15 @@
   // contact, not by session: ending the share and coming back in a new one must not bring the dialog
   // straight up again, and a viewer that dropped out is added again without a click of mine.
   const refused = new Map();   // pub -> ms
+  // What a peer can make this side say as often as it likes (a request while someone else controls, an
+  // answer to a request nobody made) is said once per session in a cooldown: twenty such messages are one
+  // toast. The answers to them still go out each time.
+  const said = new WeakMap();   // session -> { what: ms }
+  function once(sess, what, text, cls) {
+    const now = Date.now(), at = said.get(sess) || {};
+    if (now - (at[what] || 0) < K.DENY_COOLDOWN_MS) return;
+    at[what] = now; said.set(sess, at); toast(text, cls);
+  }
   const refuse = (pub) => { const now = Date.now(); for (const [k, at] of refused) if (now - at >= K.DENY_COOLDOWN_MS) refused.delete(k); refused.set(pub, now); };
 
   // The shared picture carries no pointer, so a Mac sharer's helper reports the system cursor image
@@ -44,7 +53,7 @@
         if (!sess.screenTrack) { dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); return; }
         if (C.owner && C.owner.sess === sess && ctl.give === 'on') { dc(sess, { t: 'ctl', on: true }); return; }
         if ((C.pending && C.pending.sess === sess) || (C.owner && C.owner.sess === sess)) return;   // its dialog is open, or its grant is being started
-        if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); toast(`${name} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
+        if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); once(sess, 'busy', `${name} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
         if (Date.now() - (refused.get(sess.pub) || 0) < K.DENY_COOLDOWN_MS) { dc(sess, { t: 'ctl', on: false }); return; }
         C.pending = { sess, timer: setTimeout(() => deny('expired'), K.tune.GIVE_ASK_MS) };
         ctl.give = 'asked';
@@ -56,7 +65,7 @@
         if (m.on) {
           if (ctl.take) { /* driving already */ }
           // a yes nobody is waiting for (the request ran out, their screen is gone, or it was never asked) starts nothing
-          else if (!asked || !sess.remote.screen) { dc(sess, { t: 'rel' }); toast(`${name} allowed control after your request ran out: ask again`); }
+          else if (!asked || !sess.remote.screen) { dc(sess, { t: 'rel' }); once(sess, 'late', `${name} allowed control after your request ran out: ask again`); }
           else { startTaking(sess); toast(`You control ${name}'s screen: click the video, then your mouse and keyboard act there (Esc and shortcuts too). Click outside the video to type here again.`, 'ok'); }
         } else {
           const was = ctl.take; stopTaking(sess);
@@ -66,7 +75,7 @@
             : m.why === 'busy' ? `${name}'s screen is being controlled by someone else`
             : m.why === 'expired' ? `${name} did not answer`
             : m.why === 'notsharing' ? '' : was ? `${name} stopped your control` : `${name} did not allow control`;
-          if (why) toast(why, was ? '' : 'err');
+          if (why && (asked || was)) toast(why, was ? '' : 'err'); else if (why) once(sess, 'no', why, 'err');   // a no to nothing: not each time
         }
         K.paint(); return;
       }
