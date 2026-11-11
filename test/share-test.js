@@ -1078,6 +1078,23 @@ function pageWorld(extra = {}) {
   })().catch((e) => { console.log('FAIL  V8 threw:', e.stack); process.exitCode = 1; });
 }
 
+// V9: a window that is closed takes the grant, the clipboard link and the key routing with it, like a page that died (review of stage D, LOW 7)
+{
+  // main/main.js cannot be loaded without Electron: the two handlers are taken from its text and run over stand-ins that record what they are asked.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8').split('\n'), line = (re) => (src.find((x) => re.test(x)) || '').trim();
+  const run = (text, fire) => {
+    const calls = [], lis = {}, on = (n, f) => { lis[n] = f; };
+    const ctx = vm.createContext({ calls, sharedDisplay: { id: 1 }, log: { error() {}, info() {} }, endGrant: (why) => { calls.push('grant ended'); return null; }, clip: { stop: () => calls.push('clipboard link stopped') }, setKeysRemote: (v) => calls.push(`keys remote ${v}`),
+      win: { on, webContents: { on, reload() {} } } });
+    if (!text) return 'no such handler';
+    vm.runInContext(text + '\nthis.left = () => sharedDisplay;', ctx); fire(lis);
+    return calls.concat(ctx.left() === null ? ['shared display forgotten'] : []).join(', ');
+  };
+  const all = 'grant ended, clipboard link stopped, keys remote false, shared display forgotten';
+  ok('V9 a page that died ends all four', run(line(/webContents\.on\('render-process-gone'/), (l) => l['render-process-gone']({}, { reason: 'clean-exit' })) === all);
+  ok('V9 a window that was closed ends the same four', run(line(/win\.on\('closed'/), (l) => l.closed()) === all);
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

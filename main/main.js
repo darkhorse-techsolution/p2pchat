@@ -737,6 +737,8 @@ async function boot() {
   applyOpacity(settings().opacity);
   if (isMac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // once, before the first show
   win.on('close', (e) => { if (!quitting && BACKGROUND_APP && (hotkeyOk || tray)) { e.preventDefault(); hideWindow(); } else { quitting = true; } });
+  // A background app can outlive its window. With the window goes the page that held the share: no grant, no clipboard link (and its poll) and no key routing is left without one.
+  win.on('closed', () => { endGrant('window closed'); clip.stop('window closed'); setKeysRemote(false); sharedDisplay = null; });
   win.on('hide', () => { log.info('window hide event'); push('hidden'); });
   win.on('leave-full-screen', () => { viewerFull = false; setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
   // Elsewhere than on macOS the window is in full screen a moment after the viewer asked for it. The page asks
