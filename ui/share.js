@@ -142,7 +142,7 @@
     cast: { members: Object.fromEntries([...K.cast.members].map(([pub, m]) => [pub.slice(0, 8), m.state])) },
     control: { owner: K.control.owner ? K.control.owner.sess.pub.slice(0, 8) : null, pending: K.control.pending ? K.control.pending.sess.pub.slice(0, 8) : null, taking: K.control.taking ? K.control.taking.pub.slice(0, 8) : null },
     clip: K.clip.link ? { with: K.clip.link.sess.pub.slice(0, 8), role: K.clip.link.role, on: !!K.clip.link.id, tx: K.clip.link.tx, rx: K.clip.link.rx, skipped: K.clip.link.skipped } : null,
-    bound: K.viewer.bound ? K.viewer.bound.pub.slice(0, 8) : null, theater: K.viewer.theater });
+    bound: K.viewer.bound ? K.viewer.bound.pub.slice(0, 8) : null, theater: K.viewer.theater, keysWanted: K.viewer.keysWanted });
   async function audio(pub) {
     const sess = pick(pub);
     if (!sess || !sess.pc) return null;

@@ -175,12 +175,12 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
 // The control code (share/control.js) in a world that records what it sends, shows and asks main for.
 // Time and timers are the test's: `now` is what Date.now() gives, a timer runs only when the test fires it.
 function controlWorld() {
-  const w = { now: 1e12, sent: [], toasts: [], dialogs: [], asks: [], grants: [], revoked: [], timers: [], synced: [], settings: {}, ticked: true };
+  const w = { now: 1e12, sent: [], toasts: [], dialogs: [], asks: [], grants: [], revoked: [], timers: [], synced: [], settings: {}, ticked: true, keys: 0 };
   w.K = load(['kit.js', 'tune.js', 'control.js'], { S: { settings: w.settings }, toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1) }),
     Date: { now: () => w.now }, setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; w.timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; },
     api: { controlGrant: (pub, clip) => new Promise((res) => w.grants.push({ pub, clip, res })), controlRevoke: async (token) => { w.revoked.push(token); return true; }, input() {} } });
   w.K.sessions = { dc: (sess, _label, msg) => { w.sent.push(`${sess.pub}:${JSON.stringify(msg)}`); return true; } };
-  w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess, o) => { w.dialogs.push(sess.pub); w.asks.push(o); }, clipTicked: () => w.ticked };   // the clipboard box of the dialog, as the test leaves it
+  w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess, o) => { w.dialogs.push(sess.pub); w.asks.push(o); }, clipTicked: () => w.ticked, syncKeys: () => { w.keys++; } };   // clipTicked: the clipboard box of the dialog, as the test leaves it
   w.K.clip = { link: null, sync: (sess) => w.synced.push(sess.pub), off() {} };
   w.K.cast = { retier() {} }; w.K.paint = () => {}; w.K.unprompt = () => {};
   w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null, giveClip: false, takeClip: false, askedClip: false } });
@@ -584,6 +584,48 @@ const waitFor = async (cond, ms = 400) => { const t0 = Date.now(); while (!cond(
     C.sessionClosed(alice);
     ok('X3 a session that closes clears both flags and tells the link', alice.ctl.takeClip === false && alice.ctl.giveClip === false && w.synced.length >= 1);
   })().catch((e) => { console.log('FAIL  X3 threw:', e.stack); process.exitCode = 1; });
+}
+
+// Y1: in full screen while I drive their screen, main is told that the app's own keys go there too
+{
+  const els = new Map(), told = [];
+  const $ = (id) => { if (!els.has(id)) { const cls = new Set(); els.set(id, { id, textContent: '', title: '', style: {}, srcObject: null, classList: { contains: (c) => cls.has(c), add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle: (c, on) => { if (on === undefined ? !cls.has(c) : on) cls.add(c); else cls.delete(c); } }, focus() {}, play: async () => {}, addEventListener() {}, removeEventListener() {}, requestVideoFrameCallback() {} }); } return els.get(id); };
+  const S = { current: 'alice' }, sess = { pub: 'alice', closed: false, remote: { screen: true, view: {} }, ctl: { take: false, cursor: null } };
+  const K = load(['kit.js', 'tune.js', 'viewer.js'], { $, S, contact: () => ({}), toast() {}, ipcErr: String, document: { addEventListener() {}, body: { classList: $('body').classList } }, addEventListener() {},
+    api: { keysRemote: async (on) => { told.push(on); return on; }, fullscreen: async (on) => on } });
+  let taking = false;
+  K.sessions = { get: (pub) => (pub === 'alice' ? sess : null), dc: () => true }; K.control = { isTaking: () => taking && K.viewer.bound === sess, pending: null }; K.clip = { poke() {} };
+  K.viewer.rebind();
+  ok('Y1 watching, not driving, not in full screen: main is told nothing', K.viewer.bound === sess && K.viewer.keysWanted === false && told.length === 0);
+  K.viewer.onFullscreen({ on: true });
+  ok('Y1 full screen without control: nothing', K.viewer.theater === true && told.length === 0);
+  taking = true; K.viewer.syncKeys();
+  ok('Y1 control begins in full screen: main is told once', K.viewer.keysWanted === true && told.join() === 'true');
+  K.viewer.syncKeys(); K.viewer.rebind(); K.viewer.onFullscreen({ on: true });
+  ok('Y1 and not again while nothing changes', told.length === 1);
+  K.viewer.onFullscreen({ on: false });
+  ok('Y1 full screen ends: off', K.viewer.keysWanted === false && told.join() === 'true,false');
+  K.viewer.onFullscreen({ on: true });
+  ok('Y1 full screen again while still driving: on', told.join() === 'true,false,true');
+  taking = false; K.viewer.syncKeys();
+  ok('Y1 control ends: off', K.viewer.keysWanted === false && told.join() === 'true,false,true,false');
+  taking = true; K.viewer.syncKeys(); S.current = 'bob'; K.viewer.rebind();
+  ok('Y1 another chat is opened (their screen is no longer the one on screen): off, and full screen goes', K.viewer.bound === null && K.viewer.keysWanted === false && told.join() === 'true,false,true,false,true,false');
+  S.current = 'alice'; K.viewer.rebind(); K.viewer.theater = false; taking = true; K.viewer.syncKeys();
+  ok('Y1 driving outside full screen: main is not told', K.viewer.keysWanted === false && told.length === 6);
+}
+
+// Y2: both ends of control ask for the key routing to be looked at again
+{
+  const w = controlWorld(), C = w.K.control, alice = w.sess('alice');
+  C.ask(alice); const k0 = w.keys; w.from(alice, { t: 'ctl', on: true });
+  ok('Y2 control begins: the viewer looks at where the app\'s keys go', alice.ctl.take === true && w.keys === k0 + 1);
+  const k1 = w.keys; w.from(alice, { t: 'ctl', on: false, why: 'stopped' });
+  ok('Y2 the sharer stops it: looked at again', alice.ctl.take === false && w.keys > k1);
+  C.ask(alice); w.from(alice, { t: 'ctl', on: true }); const k2 = w.keys; C.ask(alice);
+  ok('Y2 I let go: looked at again', alice.ctl.take === false && w.keys > k2);
+  C.ask(alice); w.from(alice, { t: 'ctl', on: true }); const k3 = w.keys; C.sessionClosed(alice);
+  ok('Y2 the session closes: looked at again', w.keys > k3);
 }
 
 // P1: one pop-up per incoming share, per contact

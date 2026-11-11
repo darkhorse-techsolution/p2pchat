@@ -24,7 +24,7 @@
     const v = $('viewerVideo'), view = next ? next.remote.view : null;
     v.muted = true;                                        // their voice plays from the session's <audio>
     if (v.srcObject !== view) { v.srcObject = view; if (view) v.play().catch(() => {}); }
-    applyCtl();
+    applyCtl(); syncKeys();
   }
   // Their voice has an element of the session's own: it is heard whichever chat is open, and the video
   // never carries sound.
@@ -39,6 +39,17 @@
     v.classList.toggle('ctl', on); v.style.cursor = on ? K.viewer.bound.ctl.cursor || '' : '';
     if (on && !was) { v.addEventListener(K.tune.MOVE_EV, onMove); v.focus(); }
     if (!on && was) v.removeEventListener(K.tune.MOVE_EV, onMove);
+  }
+
+  // In full screen, while I drive the screen it shows, the keys this app would act on itself (its menu
+  // shortcuts, the opacity keys) belong to that screen as well: main is told when that begins and when it
+  // ends (K.viewer.keysWanted), and the key listeners below send them on like any other key. Asked again
+  // wherever one of the two can change: full screen, control, the session on screen.
+  function syncKeys() {
+    const want = K.viewer.theater && !!K.control.isTaking();
+    if (want === K.viewer.keysWanted) return;
+    K.viewer.keysWanted = want;
+    window.api.keysRemote(want).catch(() => {});
   }
 
   // The "share yours too" prompt belongs to the session that asked (K.viewer.backFor): its Yes shares with
@@ -107,6 +118,7 @@
   function applyTheater(on) {
     K.viewer.theater = !!on; document.body.classList.toggle('theater', K.viewer.theater);
     const b = $('viewerFull'); b.textContent = K.viewer.theater ? '⤡' : '⤢'; b.title = K.viewer.theater ? 'Leave full screen (Esc)' : 'Full screen (Esc leaves, unless you are controlling their screen)';
+    syncKeys();
   }
   async function setFull(on) {
     on = on === undefined ? !K.viewer.theater : !!on;
@@ -119,7 +131,7 @@
   }
   function onFullscreen(ev) { applyTheater(!!ev.on && !!K.viewer.bound); }
 
-  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, labelAsk, clipTicked, clipNote, clipLabel, seen, sessionClosed };
+  K.viewer = { bound: null, theater: false, backFor: null, keysWanted: false, syncKeys, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, labelAsk, clipTicked, clipNote, clipLabel, seen, sessionClosed };
 
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs

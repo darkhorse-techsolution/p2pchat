@@ -202,7 +202,7 @@
     ctl.take = true; C.taking = sess; ctl.move = null; ctl.moveAt = 0;
     clearTimeout(ctl.flush); ctl.flush = null;
     K.clip.sync(sess);
-    K.viewer.applyCtl();
+    K.viewer.applyCtl(); K.viewer.syncKeys();
   }
   // I stop driving their screen, or stop waiting for their answer
   function stopTaking(sess) {
@@ -213,7 +213,7 @@
     ctl.takeClip = false; ctl.cursor = null;
     if (C.taking === sess) C.taking = null;
     K.clip.sync(sess);   // their clipboard was shared with my control of their screen: it ends here as well
-    K.viewer.applyCtl();
+    K.viewer.applyCtl(); K.viewer.syncKeys();
   }
   // true while the video on screen is the screen I drive
   const isTaking = () => { const b = K.viewer.bound; return !!(b && C.taking === b && b.ctl.take && b.remote.screen); };

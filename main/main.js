@@ -409,7 +409,7 @@ handle('state', () => ({
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
-  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE },
+  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE }, keysRemote,
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -461,13 +461,30 @@ handle('micPermission', async () => { if (!isMac) return true; try { return awai
 // Space switch, so it works for a Dock-less app and in every window mode), setFullScreen
 // elsewhere. Element fullscreen is not used (every page permission stays refused).
 function isViewerFullscreen() { return !!win && !win.isDestroyed() && (win.isFullScreen() || (isMac && win.isSimpleFullScreen())); }
+// While the viewer drives a contact's screen in full screen, the keys this app would take for itself go to
+// that screen with all the others: the page says when (keysRemote), and then the application menu's
+// shortcuts are not acted on and the opacity keys are not consumed, so the page gets them and sends them
+// on. Only in full screen, and off again whenever full screen ends, the window is hidden, or the page
+// reloads or dies. The three global hotkeys (show/hide, window mode, full screen) are not touched: they
+// stay this machine's. Keys the operating system keeps for itself never reach the app and are not asked for.
+let keysRemote = false;
+function setKeysRemote(on) {
+  on = !!on && isViewerFullscreen();
+  if (on === keysRemote) return on;
+  keysRemote = on;
+  if (win && !win.isDestroyed()) win.webContents.setIgnoreMenuShortcuts(on);
+  log.info('keysRemote', on);
+  return on;
+}
 function setViewerFullscreen(on) {
   if (!win || win.isDestroyed()) return false;
   on = !!on;
+  if (!on) setKeysRemote(false);
   if (on !== isViewerFullscreen()) { if (isMac) win.setSimpleFullScreen(on); else win.setFullScreen(on); push('fullscreen', { on }); }
   return on;
 }
 handle('fullscreen', (_e, on) => setViewerFullscreen(on));
+handle('keysRemote', (_e, on) => setKeysRemote(on));
 // --- remote control of the shared display ------------------------------------------
 // The sharer allowed the viewer to drive this machine: a helper process posts the viewer's
 // events to the OS (main/input.js). Granted to one contact at a time (main/grant.js): the
@@ -686,12 +703,12 @@ async function boot() {
   // The UI is a local file and never navigates or opens windows. Refuse both, and every permission.
   win.webContents.on('before-input-event', (e, input) => {
     if (!PROD && input.type === 'keyDown') log.info('input', input.key, input.code, `meta=${input.meta} ctrl=${input.control} alt=${input.alt} shift=${input.shift}`);
-    const d = opacityKey(input);
+    const d = keysRemote ? 0 : opacityKey(input);   // theirs while I drive their screen in full screen
     if (d) { e.preventDefault(); applyOpacity(clampOpacity(settings().opacity) + d); }
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   // a reload: the page that held the share and the grant is gone, whatever it was doing
-  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); sharedDisplay = null; } });
+  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); setKeysRemote(false); sharedDisplay = null; } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Everything is refused except what a screen share needs, and only for this window:
   // the display (served below without a picker) and the microphone (never the camera).
@@ -711,7 +728,7 @@ async function boot() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.on('console-message', (d) => { if (d.level === 'error' || !PROD) logLine(d.level === 'error' ? 'ERROR' : 'INFO', ['renderer', d.message, d.sourceId, d.lineNumber]); });
   win.webContents.on('preload-error', (_e, p, err) => log.error('preload', p, err));
-  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); sharedDisplay = null; if (d.reason !== 'clean-exit') win.webContents.reload(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); setKeysRemote(false); sharedDisplay = null; if (d.reason !== 'clean-exit') win.webContents.reload(); });
   if (isWin) win.setSkipTaskbar(true);
   log.info('window created');
   applyProtection(win);
@@ -719,7 +736,7 @@ async function boot() {
   if (isMac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // once, before the first show
   win.on('close', (e) => { if (!quitting && BACKGROUND_APP && (hotkeyOk || tray)) { e.preventDefault(); hideWindow(); } else { quitting = true; } });
   win.on('hide', () => { log.info('window hide event'); push('hidden'); });
-  win.on('leave-full-screen', () => push('fullscreen', { on: false }));   // the OS took it out (green button, Esc); the viewer follows
+  win.on('leave-full-screen', () => { setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
   win.on('show', () => { log.info('window show event'); if (isLinux && clampOpacity(settings().opacity) < 0.995) linuxSetOpacity(clampOpacity(settings().opacity)); });
   win.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
   win.once('ready-to-show', () => { if (!process.argv.includes('--start-hidden')) showWindow(); });
