@@ -6,6 +6,9 @@
 // Linux/X11, PowerShell + SendInput on Windows. No native Node module, nothing to rebuild per
 // Electron version. The helper runs only while the sharer allows control; it releases every
 // held key and button when told to reset and when its stdin closes.
+// With `dry` (a dev run started with --dry-input, see main.js) no helper is ever started: start
+// and stop only flip a flag and every event is counted and dropped, so control can be tested on a
+// machine that must not be driven.
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -44,9 +47,9 @@ const KEYS = process.platform === 'darwin' ? MAC : process.platform === 'linux' 
 const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
 const READY_MS = 15000;   // PowerShell compiles its P/Invoke shim first (a few seconds)
 
-function createController({ log, helpersDir, screen, systemPreferences }) {
+function createController({ log, helpersDir, screen, systemPreferences, dry }) {
   const platform = process.platform;
-  let proc = null, display = null, events = 0, dropped = 0, stopping = false;
+  let proc = null, display = null, events = 0, dropped = 0, stopping = false, dryOn = false;
   const api = { onExit: null, onCursor: null };
 
   function helper() {
@@ -56,6 +59,7 @@ function createController({ log, helpersDir, screen, systemPreferences }) {
     return null;
   }
   function available() {
+    if (dry) return { ok: true };
     const h = helper();
     if (!h) return { ok: false, reason: 'platform', message: 'Remote control is not available on this system' };
     if (platform === 'linux') {
@@ -79,6 +83,7 @@ function createController({ log, helpersDir, screen, systemPreferences }) {
     const a = available();
     if (!a.ok) return Promise.resolve(a);
     display = { id: disp.id, bounds: disp.bounds, scaleFactor: disp.scaleFactor };
+    if (dry) { dryOn = true; events = dropped = 0; return Promise.resolve({ ok: true }); }
     if (proc) return Promise.resolve({ ok: true });
     const h = helper();
     return new Promise((resolve) => {
@@ -109,6 +114,7 @@ function createController({ log, helpersDir, screen, systemPreferences }) {
   }
 
   function stop(why) {
+    if (dry) { dryOn = false; display = null; return; }
     const p = proc; display = null;
     if (!p) return;
     stopping = true; proc = null;
@@ -120,7 +126,7 @@ function createController({ log, helpersDir, screen, systemPreferences }) {
 
   // One event from the viewer: x/y are fractions of the shared display (0..1).
   function event(ev) {
-    if (!proc || !display || !ev || typeof ev !== 'object') return;
+    if ((!proc && !dryOn) || !display || !ev || typeof ev !== 'object') return;
     const b = display.bounds;
     const at = (nx, ny) => {
       const dip = { x: b.x + clamp01(nx) * b.width, y: b.y + clamp01(ny) * b.height };
@@ -144,10 +150,11 @@ function createController({ log, helpersDir, screen, systemPreferences }) {
       default: dropped++; return;
     }
     events++;
+    if (dryOn) return;
     try { proc.stdin.write(line + '\n'); } catch (e) { log.error('input write', e.message); }
   }
 
-  const status = () => ({ on: !!proc, events, dropped, display, helper: helper()?.name || null });
+  const status = () => ({ on: !!proc || dryOn, events, dropped, display, helper: helper()?.name || null, dry: !!dry });
   return Object.assign(api, { available, start, stop, event, status });
 }
 

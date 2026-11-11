@@ -1,14 +1,14 @@
 'use strict';
 // Screen share: what the viewer has on screen and hears. The one <video> their screen plays in (always
 // muted), an <audio> per session for their voice, full screen, the pointer and key listeners that feed
-// remote control, and the "share yours too" prompt.
+// remote control, and the two prompts a share can open (control of my screen, "share yours too").
 //
-// Reads from app.js: S, $, toast, contact, ipcErr, show, window.closeModal. Reads K.sessions and K.tune,
-// and K.control.isTaking at call time.
+// Reads from app.js: S, $, toast, contact, ipcErr. Reads K.sessions, K.tune, K.control, K.prompt and
+// K.unprompt at call time.
 (() => {
   const K = window.ShareKit;
-  // K.control is set by a later script: a window blur between two script loads finds none yet
-  const taking = () => (K.control && K.control.isTaking() ? K.viewer.bound : null);   // the session whose screen I drive right now, or null
+  // share/control.js loads before this file, so every listener below finds K.control
+  const taking = () => (K.control.isTaking() ? K.viewer.bound : null);   // the session whose screen I drive right now, or null
 
   // --- the video and the sound ---------------------------------------------------------------
   // First thing in every paint: which session the one <video> shows (K.viewer.bound: the session of the
@@ -43,11 +43,23 @@
 
   // The "share yours too" prompt belongs to the session that asked (K.viewer.backFor): its Yes shares with
   // that contact or with nobody.
-  function askBack(sess) { K.viewer.backFor = sess; $('shareBackName').textContent = contact(sess.pub)?.name || 'They'; show('mShareBack'); }
+  function askBack(sess) { K.viewer.backFor = sess; $('shareBackName').textContent = contact(sess.pub)?.name || 'They'; K.prompt('mShareBack'); }
+  // The control dialog belongs to the session that asked, whichever chat is open. It names the contact
+  // and the key, opens with the keyboard on Deny and takes no click on Allow for a moment: a dialog that
+  // comes up under a click or a key press meant for something else must not be answered by it.
+  let arming = null;
+  function showAsk(sess) {
+    const c = contact(sess.pub), yes = $('controlYes');
+    $('controlName').textContent = K.nameOf(sess.pub);
+    $('controlWho').textContent = `(${c && c.verified ? 'verified' : 'not verified'}, key ${sess.pub.slice(0, 8)})`;
+    yes.disabled = true; clearTimeout(arming); arming = setTimeout(() => { yes.disabled = false; }, K.ARM_MS);
+    K.prompt('mControl');
+    setTimeout(() => { const p = K.control.pending; if (p && p.sess === sess && !$('mControl').classList.contains('hidden')) $('controlNo').focus(); }, 60);
+  }
   function sessionClosed(sess) {
     const a = sess.remote.audioEl;
     if (a) { a.srcObject = null; a.remove(); sess.remote.audioEl = null; }
-    if (K.viewer.backFor === sess) { K.viewer.backFor = null; if (!$('mShareBack').classList.contains('hidden')) window.closeModal(); }   // the prompt names this contact: it must not outlive the session
+    if (K.viewer.backFor === sess) { K.viewer.backFor = null; K.unprompt('mShareBack'); }   // the prompt names this contact: it must not outlive the session
     if (K.viewer.bound === sess) K.viewer.bound = null;    // the paint that ends every close takes the video and full screen down
   }
 
@@ -81,7 +93,7 @@
   }
   function onFullscreen(ev) { applyTheater(!!ev.on && !!K.viewer.bound); }
 
-  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, sessionClosed };
+  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, sessionClosed };
 
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs

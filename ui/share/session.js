@@ -6,7 +6,7 @@
 // stream or on two.
 //
 // Reads from app.js: S, toast, contact, ipcErr, renderContacts. Reads at call time: K.tune, K.paint,
-// K.paintStats, K.viewer, K.rec, K.cast, and K.control (in ui/share.js until it has a file of its own).
+// K.paintStats, K.viewer, K.rec, K.cast and K.control.
 (() => {
   const K = window.ShareKit;
   const newSid = () => Math.random().toString(36).slice(2, 12);
@@ -51,7 +51,7 @@
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null,
       remote: { video: null, audio: null, view: null, audioEl: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
       closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null,
-      ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null } };
+      ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null, token: null, deniedAt: 0 } };
     map.set(pub, sess);
     // the ICE config is read per session, so a Settings change applies to the next share
     sess.ready = window.api.iceConfig().then((cfg) => { if (!sess.closed) build(sess, cfg); }).catch((e) => { console.error('share session', e); close(sess, 'failed'); });
@@ -222,7 +222,7 @@
     sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
     if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
     if (ev.screen && !was && S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`);
-    if (!ev.screen && (sess.ctl.take || sess.ctl.asked)) { K.control.stopTaking(sess); clearTimeout(sess.ctl.askTimer); sess.ctl.asked = false; }
+    if (!ev.screen) K.control.stopTaking(sess);             // no screen left to drive, or to ask for
     if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; K.viewer.askBack(sess); }
     if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
     K.rec.sync(sess); K.paint(); renderContacts();
@@ -230,8 +230,21 @@
   function onStatus(ev) { const sess = map.get(ev.pub); if (sess && ev.status !== 'online') close(sess, 'offline'); }
 
   // --- data channels ----------------------------------------------------------------
+  // A channel carries only the message types of its label, and a channel with any other label is left
+  // alone: no handler, no slot. (A released peer reads every channel as control whatever its label, so
+  // no type it knows is ever sent under a new label.)
+  const TYPES = new Map([['ctl', new Set(['req', 'ctl', 'rel', 'cur', 'm', 'b', 'w', 'k', 'r'])], ['move', new Set(['m'])]]);
+  function onMessage(sess, types, data) {
+    if (typeof data !== 'string' || data.length > K.DC_MAX) return;
+    let m; try { m = JSON.parse(data); } catch { return; }
+    if (!m || typeof m !== 'object') return;
+    sess.ctl.recv++;
+    if (types.has(m.t)) K.control.onMessage(sess, m);
+  }
   function adoptChannel(sess, ch) {
-    ch.onmessage = (e) => K.control.onData(sess, e.data);
+    const types = TYPES.get(ch.label);
+    if (!types) return;
+    ch.onmessage = (e) => onMessage(sess, types, e.data);
     ch.onerror = (e) => console.warn('channel', ch.label, e.error ? e.error.message : e);
     if (ch.label === 'ctl' && !sess.ctl.dc) sess.ctl.dc = ch;
     if (ch.label === 'move' && !sess.ctl.mv) sess.ctl.mv = ch;

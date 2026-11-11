@@ -9,6 +9,7 @@ echo "== crypto";  "$ELECTRON" test/crypto-test.js || exit 1
 echo "== engine";  "$ELECTRON" test/engine-test.js || exit 1
 echo "== relay";   "$ELECTRON" test/relay-test.js || exit 1
 echo "== relay+engine"; "$ELECTRON" test/relay-engine-test.js || exit 1
+echo "== control"; "$ELECTRON" test/control-test.js || exit 1
 echo "== theme contrast"; node test/theme-contrast.js | tail -1 || exit 1
 echo
 echo "UI flow: start two instances with --remote-debugging-port=9411 / 9412 and fresh --instance names, then run test/ui/flow.sh"

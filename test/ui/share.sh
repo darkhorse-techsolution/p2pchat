@@ -1,10 +1,12 @@
 #!/bin/sh
 # Screen share flow against two FRESH dev instances on CDP 9421 (Alice) / 9422 (Bob), started with
-# --use-fake-device-for-media-stream (a generated tone instead of the real microphone):
-#   ./run.sh --instance=shareA --remote-debugging-port=9421 --x=20 --y=60 --use-fake-device-for-media-stream &
-#   ./run.sh --instance=shareB --remote-debugging-port=9422 --x=960 --y=60 --use-fake-device-for-media-stream &
-# Off unless asked for, because they act on this machine itself or keep a picture of its screen:
-#   REAL_INPUT=1                 runs 1e and 1f: Alice clicks Allow, then Bob's pointer, click and keys land here
+# --use-fake-device-for-media-stream (a generated tone instead of the real microphone) and --dry-input
+# (remote control can be allowed, but no input helper starts: events are counted and dropped):
+#   ./run.sh --instance=shareA --remote-debugging-port=9421 --x=20 --y=60 --use-fake-device-for-media-stream --dry-input &
+#   ./run.sh --instance=shareB --remote-debugging-port=9422 --x=960 --y=60 --use-fake-device-for-media-stream --dry-input &
+# Steps 1e and 1f click Allow on Alice, so they run only when her main process says it is dry, or with
+# REAL_INPUT=1. Off unless asked for, because they act on this machine itself or keep a picture of its screen:
+#   REAL_INPUT=1                 without --dry-input: Bob's pointer, click and keys land here, and the pointer is read back
 #   SHARE_FRAME=/path/frame.jpg  saves one frame of what Bob sees to that file
 CDP="$(cd "$(dirname "$0")" && pwd)/cdp.js"
 sleep_py() { python3 -c "import time;time.sleep($1)"; }
@@ -63,19 +65,20 @@ REC2=$(B "window.Share.lastRecording()")
 echo "bob off:  $(B "$RECQ") second file: $REC2 ($(stat -f %z "$REC2" 2>/dev/null || stat -c %s "$REC2") bytes)"
 [ "$REC1" != "$REC2" ] && echo "two distinct files: yes" || echo "two distinct files: NO"
 rm -f "$REC1" "$REC2"
-if [ "$REAL_INPUT" = 1 ]; then
-  echo "--- 1e. remote control: bob asks, alice allows, bob's pointer and keys land on alice's machine"
+DRY=$(A "window.api.state().then(s=>s.control.dry===true)")
+if [ "$DRY" = true ] || [ "$REAL_INPUT" = 1 ]; then
+  echo "--- 1e. remote control: bob asks, alice allows (alice's input is dry: $DRY)"
   CTLQ='JSON.stringify({btn:document.getElementById("viewerCtl").textContent,ctl:window.Share.debug().ctl,pill:document.getElementById("sharePill").textContent,stop:!document.getElementById("btnStopCtl").classList.contains("hidden"),videoCtl:document.getElementById("viewerVideo").classList.contains("ctl")})'
   DLGQ='JSON.stringify({open:!document.getElementById("mControl").classList.contains("hidden"),name:document.getElementById("controlName").textContent})'
   B "(()=>{document.getElementById('viewerCtl').click();return 'clicked'})()" >/dev/null
-  sleep_py 1
+  sleep_py 1.5
   echo "alice dialog: $(A "$DLGQ")  bob: $(B "$CTLQ")"
   A "(()=>{document.getElementById('controlYes').click();return 'allowed'})()" >/dev/null
   sleep_py 3
   echo "bob:   $(B "$CTLQ")"
   echo "alice: $(A "$CTLQ")"
   echo "alice main: $(A "window.api.state().then(s=>JSON.stringify(s.control))")"
-  if [ "$(uname)" = Darwin ]; then
+  if [ "$REAL_INPUT" = 1 ] && [ "$DRY" != true ] && [ "$(uname)" = Darwin ]; then
     # Real injection, kept harmless: the pointer moves 5 px and back; then alice's own window is brought to
     # the front and bob clicks into her composer and types "hi" there, only if her page has keyboard focus.
     CUR='ObjC.import("CoreGraphics"); var l=$.CGEventGetLocation($.CGEventCreate(null)); Math.round(l.x)+" "+Math.round(l.y)'
@@ -113,7 +116,7 @@ if [ "$REAL_INPUT" = 1 ]; then
   sleep_py 1
   echo "bob after deny: $(B "$CTLQ")"
 else
-  echo "--- 1e, 1f. remote control: skipped (REAL_INPUT=1 runs them: Allow is clicked and real pointer and key events are sent)"
+  echo "--- 1e, 1f. remote control: skipped (alice was not started with --dry-input; REAL_INPUT=1 runs them with real pointer and key events)"
 fi
 echo "--- 2. bob: talk back"
 B "(()=>{document.getElementById('viewerTalk').click();return 'clicked'})()" >/dev/null

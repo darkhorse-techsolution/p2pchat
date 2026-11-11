@@ -9,6 +9,7 @@ const { Transport } = require('../core/transport.js');
 const { Engine } = require('../core/engine.js');
 const { trayIcon } = require('./icon.js');
 const { createController } = require('./input.js');
+const { createGrant } = require('./grant.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -406,7 +407,7 @@ handle('state', () => ({
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
-  recordingsDir: recordingsDir(), control: control.status(),
+  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() },
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -467,21 +468,27 @@ function setViewerFullscreen(on) {
 handle('fullscreen', (_e, on) => setViewerFullscreen(on));
 // --- remote control of the shared display ------------------------------------------
 // The sharer allowed the viewer to drive this machine: a helper process posts the viewer's
-// events to the OS (main/input.js). Granted per share, stopped by the sharer, the share's
-// end, a dead renderer or quit. The helpers live outside the asar (asarUnpack).
+// events to the OS (main/input.js). Granted to one contact at a time (main/grant.js): the
+// renderer gets a token with the grant and shows it with every event. The grant ends when the
+// sharer stops it, the capture ends, the page reloads or dies, or the app quits. The helpers
+// live outside the asar (asarUnpack).
 const helpersDir = path.join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'main', 'helpers');
-const control = createController({ log, helpersDir, screen, systemPreferences });
-control.onExit = (why) => push('control', { on: false, why });
-control.onCursor = (c) => push('cursor', c);   // the sharer's renderer passes it to the viewer
-handle('controlGrant', () => {
+const DRY_INPUT = !PROD && process.argv.includes('--dry-input');   // dev runs only: a grant works, but no helper starts and no event reaches the OS
+const control = createController({ log, helpersDir, screen, systemPreferences, dry: DRY_INPUT });
+const grant = createGrant({ control });
+const endGrant = (why) => grant.end(why);
+control.onExit = (why) => { const g = grant.drop(); if (g) push('control', { on: false, why, token: g.token }); };
+control.onCursor = (c) => { const g = grant.current(); if (g && !g.pending) push('cursor', { ...c, token: g.token }); };   // the sharer's renderer passes it to the viewer
+handle('controlGrant', (_e, pub) => {
+  pub = String(pub || '');
+  if (!store.contact(pub)) throw new Error('unknown contact');
   if (!sharedDisplay) return { ok: false, reason: 'notsharing', message: 'Nothing is being shared' };
-  const d = screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) || sharedDisplay;
-  return control.start(d);
+  return grant.start(pub, screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) || sharedDisplay);
 });
-handle('controlRevoke', () => { control.stop('revoked'); return true; });
+handle('controlRevoke', (_e, token) => { grant.revoke(token); return true; });
 // The renderer stopped its capture: no display is shared any more, so none can be controlled.
-handle('captureEnded', () => { sharedDisplay = null; control.stop('capture ended'); return true; });
-ipcMain.on('input', (e, ev) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; control.event(ev); });
+handle('captureEnded', () => { sharedDisplay = null; endGrant('capture ended'); return true; });
+ipcMain.on('input', (e, token, ev) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; grant.input(token, ev); });
 // Recording an incoming share: the renderer's MediaRecorder streams WebM pieces here and they
 // are appended, in order, to a plain file in the Videos folder. Deliberately not in the vault:
 // a recording is for playing in any player. Files are created exclusively and never reused.
@@ -659,6 +666,8 @@ async function boot() {
     if (d) { e.preventDefault(); applyOpacity(clampOpacity(settings().opacity) + d); }
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  // a reload: the page that held the share and the grant is gone, whatever it was doing
+  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); sharedDisplay = null; } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // Everything is refused except what a screen share needs, and only for this window:
   // the display (served below without a picker) and the microphone (never the camera).
@@ -678,7 +687,7 @@ async function boot() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.on('console-message', (d) => { if (d.level === 'error' || !PROD) logLine(d.level === 'error' ? 'ERROR' : 'INFO', ['renderer', d.message, d.sourceId, d.lineNumber]); });
   win.webContents.on('preload-error', (_e, p, err) => log.error('preload', p, err));
-  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); control.stop('renderer gone'); if (d.reason !== 'clean-exit') win.webContents.reload(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); sharedDisplay = null; if (d.reason !== 'clean-exit') win.webContents.reload(); });
   if (isWin) win.setSkipTaskbar(true);
   log.info('window created');
   applyProtection(win);
