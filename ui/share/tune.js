@@ -4,7 +4,7 @@
 // track is sent on, the pacing of pointer moves, and the delay readout. Work on latency happens in
 // this file; the rest of the share code calls K.tune and holds none of these numbers.
 //
-// Reads K.sessions.dc (ui/share.js) at call time.
+// Reads K.sessions.dc (ui/share/session.js) at call time.
 (() => {
   const K = window.ShareKit;
   // Caps: VP9 screen content at up to 8 Mb/s and 30 fps, 2560 px wide. Congestion control brings
