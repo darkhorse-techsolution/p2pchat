@@ -166,7 +166,7 @@
       cb.title = sess.ctl.take ? 'Stop controlling their screen' : sess.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard';
     }
     document.getElementById('chat').classList.toggle('with-viewer', watching);
-    if (mine) K.rec.paint(sess);
+    if (mine) { K.rec.paint(sess); K.paintStats(sess); }   // the stats line too: the poll writes it only every 2 s, and not while this chat was closed
   }
   const sessionPub = () => { const sess = pick(); return sess ? sess.pub : null; };
   K.paint = render;
