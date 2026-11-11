@@ -182,7 +182,8 @@
 
   // The microphone button: on a session without one it starts the microphone, after that it mutes and
   // unmutes. For a contact who gets my screen it is the audience's switch: everyone who gets my screen
-  // hears me or nobody does. Where I only watch, it is that session's own.
+  // hears me or nobody does, also when the share began without a microphone and the button starts it.
+  // Where I only watch, it is that session's own.
   async function talk(sess) {
     if (!sess.micTrack) {
       cast.adding++;
@@ -190,8 +191,14 @@
         const got = await mic.acquire(false);
         await sess.ready;
         if (sess.closed) return;
-        if (got && K.tune.SPLIT_MIC) { await sess.peerSeen; if (sess.closed) return; }
-        if (got && !sess.micTrack) attachMic(sess);           // a second click waited on the same start and finds it attached
+        const all = !!sess.screenTrack;                       // this contact gets my screen: the click is for the whole audience
+        if (got && all) mic.audienceOn = true;
+        for (const x of all ? K.sessions.all().filter((y) => y.screenTrack) : [sess]) {
+          if (!got || x.closed || x.micTrack) continue;       // a second click waited on the same start and finds it attached
+          if (K.tune.SPLIT_MIC) { await x.peerSeen; if (x.closed || x.micTrack) continue; }
+          attachMic(x);
+          if (x !== sess) K.sessions.sendState(x);
+        }
       } finally { cast.adding--; capture.settle(); mic.settle(); }   // both: a share that ended while this call was in flight left its capture for it to stop
       K.sessions.sendState(sess);
     } else if (sess.screenTrack) {

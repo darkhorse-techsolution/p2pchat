@@ -697,7 +697,7 @@ function castWorld() {
   const track = (kind) => { const t = { kind, enabled: true, readyState: 'live', contentHint: '', stop() { this.readyState = 'ended'; }, clone: () => track(kind), applyConstraints: async () => {}, getSettings: () => ({ width: 1920 }) }; w.made.push(t); return t; };
   w.K = load(['kit.js', 'tune.js', 'cast.js'], { toast: (t) => w.toasts.push(t), renderContacts() {}, contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1), status: 'online' }), showScreenPermission() {}, console: { warn() {}, error() {}, log() {} },
     navigator: { mediaDevices: { getDisplayMedia: async () => { w.gdm++; return { getVideoTracks: () => [track('video')] }; }, getUserMedia: async () => { if (w.micGate) await w.micGate; return { getAudioTracks: () => [track('audio')] }; } } },
-    api: { screenPermission: async () => 'ok', micPermission: async () => true, captureEnded: async () => { w.ended++; return true; } } });
+    api: { screenPermission: async () => 'ok', micPermission: async () => w.micOk !== false, captureEnded: async () => { w.ended++; return true; } } });
   w.K.paint = () => {}; w.K.control = { owner: null, endGive() {} }; w.K.clip = { link: null };
   w.mk = (pub) => { const x = { pub, closed: false, seen: false, ready: Promise.resolve(), mode: 'one', local: { addTrack() {}, removeTrack() {} }, screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null, scaled: false, remote: { screen: false, mic: false, rec: false }, ctl: { give: 'off' },
     pc: { addTrack: (t) => ({ track: t, getParameters: () => ({ encodings: [{}] }), setParameters: async () => {} }), removeTrack() {}, getTransceivers: () => [] } }; w.held.set(pub, x); return x; };
@@ -830,6 +830,24 @@ function pageWorld(extra = {}) {
     const third = cast.add('dee', 'one'); await idle(); cast.remove('dee'); free(); const r3 = await third; await idle();
     ok('F5 an add() that gives up before its lease lets go of the capture as well', r3 === false && cast.leasing === 0 && cast.adding === 0 && w.K.capture.state === 'idle');
   })().catch((e) => { console.log('FAIL  F5 threw:', e.stack); process.exitCode = 1; });
+}
+
+// F6: the microphone button of a share that began without a microphone starts it for everyone who gets my screen
+{
+  (async () => {
+    const w = castWorld(), cast = w.K.cast; w.micOk = false;
+    await cast.add('bob', 'one'); await cast.add('cy', 'one');
+    const dee = w.mk('dee'); dee.remote.screen = true;          // someone whose screen I only watch
+    ok('F6 (a broadcast that began without a microphone)', w.mic('bob') === 'none' && w.mic('cy') === 'none' && cast.members.size === 2);
+    w.micOk = true; w.states.length = 0; await cast.talk(w.held.get('bob'));
+    ok('F6 the button in one viewer\'s chat starts it for every viewer', w.mic('bob') === 'on' && w.mic('cy') === 'on' && w.K.mic.leases.size === 2 && w.K.mic.audienceOn === true);
+    ok('F6 each of them is told', w.states.includes('bob:1') && w.states.includes('cy:1'));
+    ok('F6 a contact I only watch is not given it', w.mic('dee') === 'none');
+    await cast.talk(w.held.get('cy'));
+    ok('F6 the next click is the audience switch, as before', w.mic('bob') === 'muted' && w.mic('cy') === 'muted');
+    await cast.talk(dee);
+    ok('F6 the button of a contact I only watch starts it for that contact alone', w.mic('dee') === 'on' && w.K.mic.leases.size === 3 && w.mic('bob') === 'muted');
+  })().catch((e) => { console.log('FAIL  F6 threw:', e.stack); process.exitCode = 1; });
 }
 
 // P1: one pop-up per incoming share, per contact
