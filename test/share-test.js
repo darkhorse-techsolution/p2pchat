@@ -654,6 +654,41 @@ const waitFor = async (cond, ms = 400) => { const t0 = Date.now(); while (!cond(
   ok('F1 the Remove button tells the share code before the contact is removed', rm.indexOf('window.Share.forget(S.current)') > 0 && rm.indexOf('window.Share.forget(S.current)') < rm.indexOf('window.api.removeContact(S.current)'));
 }
 
+// F2: the "share yours too" prompt never takes the place of a prompt that is up, and opens disarmed
+{
+  const els = new Map(), timers = [], shown = []; let active = null;
+  const $ = (id) => { if (!els.has(id)) { const cls = new Set(['hidden']); els.set(id, { id, disabled: false, textContent: '', title: '', style: {}, classList: { contains: (c) => cls.has(c), add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle() {} }, focus() { active = id; }, addEventListener() {}, requestVideoFrameCallback() {} }); } return els.get(id); };
+  const up = (id) => !$(id).classList.contains('hidden');
+  let open = null;
+  const K = load(['kit.js', 'tune.js', 'viewer.js'], { $, S: { current: null }, contact: (pub) => ({ name: pub[0].toUpperCase() + pub.slice(1) }), toast() {}, document: { addEventListener() {} }, addEventListener() {}, closeLightbox() {},
+    show: (id) => { shown.push(id); open = id; $('backdrop').classList.remove('hidden'); $(id).classList.remove('hidden'); }, closeModal: () => { if (!open) return; $(open).classList.add('hidden'); $('backdrop').classList.add('hidden'); open = null; },
+    get openModal() { return open; }, setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; } });
+  const run = (ms) => { for (const t of timers.splice(0)) if (t.on && t.ms <= ms) t.fn(); else if (t.on) timers.push(t); };
+  K.control = { pending: null, isTaking: () => false }; K.clip = { poke() {} };
+  const dee = { pub: 'dee', askedBack: true }, eve = { pub: 'eve', askedBack: true };
+  K.viewer.askBack(dee);
+  const atOpen = $('shareBackYes').disabled; run(60); const focus = active; run(K.ARM_MS);
+  ok('F2 the prompt opens for the session that asked, with its Yes disarmed and the keyboard on "Just watch"; armed after K.ARM_MS', up('mShareBack') && K.viewer.backFor === dee && $('shareBackName').textContent === 'Dee' && atOpen === true && focus === 'shareBackNo' && $('shareBackYes').disabled === false);
+  K.viewer.askBack(eve);
+  ok('F2 a second contact asking while it is up does not take it over: still Dee\'s, still armed as it was', K.viewer.backFor === dee && $('shareBackName').textContent === 'Dee' && $('shareBackYes').disabled === false && shown.join() === 'mShareBack');
+  ok('F2 and that second session may ask again with its next state frame', eve.askedBack === false && dee.askedBack === true);
+  active = 'input'; K.viewer.seen();
+  const again = $('shareBackYes').disabled; run(60);
+  ok('F2 the window is shown or focused with the prompt up: disarmed anew, the keyboard back on "Just watch"', again === true && active === 'shareBackNo');
+  run(K.ARM_MS); K.unprompt('mShareBack'); K.viewer.backFor = null; active = 'input'; K.viewer.seen(); run(K.ARM_MS);
+  ok('F2 with no prompt up, nothing is touched', $('shareBackYes').disabled === false && active === 'input' && timers.length === 0);
+  for (const [what, set, unset] of [['the control dialog is up', () => { K.control.pending = { sess: dee }; K.prompt('mControl'); }, () => { K.control.pending = null; K.unprompt('mControl'); }], ['a control request is open, its dialog put aside', () => { K.control.pending = { sess: dee }; }, () => { K.control.pending = null; }], ['the picker is up', () => K.prompt('mCast'), () => K.unprompt('mCast')]]) {
+    set(); eve.askedBack = true; const n = shown.length; K.viewer.askBack(eve);
+    ok(`F2 while ${what} the prompt does not open, and the session may ask again`, !up('mShareBack') && K.viewer.backFor === null && shown.length === n && eve.askedBack === false);
+    unset();
+  }
+  K.prompt('mControl');
+  const refused = [K.prompt('mShareBack'), K.prompt('mCast')];
+  ok('F2 nothing is shown in place of the control dialog: it stays up until it is answered', refused.join() === 'false,false' && up('mControl') && !up('mShareBack') && !up('mCast') && open === 'mControl');
+  K.unprompt('mControl'); K.prompt('mShareBack');
+  ok('F2 the control dialog itself still takes the place of another prompt', K.prompt('mControl') === true && up('mControl') && !up('mShareBack'));
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

@@ -53,8 +53,23 @@
   }
 
   // The "share yours too" prompt belongs to the session that asked (K.viewer.backFor): its Yes shares with
-  // that contact or with nobody.
-  function askBack(sess) { K.viewer.backFor = sess; $('shareBackName').textContent = contact(sess.pub)?.name || 'They'; K.prompt('mShareBack'); }
+  // that contact or with nobody. It never takes the place of a prompt that is up: not of another contact's
+  // (a click meant for that one would share with this one), not of the control dialog, not of the picker,
+  // and not while a control request is open at all. The session may then ask again with its next state frame.
+  // Its Yes takes no click for a moment after it opens, like Allow, and the keyboard starts on "Just watch".
+  let armingBack = null;
+  function armBack() {
+    const yes = $('shareBackYes'), sess = K.viewer.backFor;
+    yes.disabled = true; clearTimeout(armingBack); armingBack = setTimeout(() => { yes.disabled = false; }, K.ARM_MS);
+    setTimeout(() => { if (sess && K.viewer.backFor === sess && !$('mShareBack').classList.contains('hidden')) $('shareBackNo').focus(); }, 60);
+  }
+  function askBack(sess) {
+    const up = (id) => !$(id).classList.contains('hidden');
+    if (up('mShareBack') || up('mControl') || up('mCast') || K.control.pending) { sess.askedBack = false; return; }
+    K.viewer.backFor = sess; $('shareBackName').textContent = contact(sess.pub)?.name || 'They';
+    armBack();
+    K.prompt('mShareBack');
+  }
   // The control dialog belongs to the session that asked, whichever chat is open. It names the contact
   // and the key, opens with the keyboard on Deny and takes no click on Allow for a moment: a dialog that
   // comes up under a click or a key press meant for something else must not be answered by it.
@@ -92,7 +107,10 @@
   // The moment that counts is when the dialog can be seen, not when the request came: one that arrived
   // while the window was hidden or in the background is disarmed anew, with the keyboard back on Deny,
   // when the window is shown or gets the focus.
-  function seen() { if (K.control.pending && !$('mControl').classList.contains('hidden')) arm(); }
+  function seen() {
+    if (K.control.pending && !$('mControl').classList.contains('hidden')) arm();
+    if (K.viewer.backFor && !$('mShareBack').classList.contains('hidden')) armBack();
+  }
   function sessionClosed(sess) {
     const a = sess.remote.audioEl;
     if (a) { a.srcObject = null; a.remove(); sess.remote.audioEl = null; }

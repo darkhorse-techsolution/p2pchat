@@ -25,11 +25,15 @@
   K.capturable = () => !(S.capture && S.capture.supported && S.protection);
   // A share prompt has to be seen: it sits under the full-screen viewer and under the image viewer, and
   // only one modal shows at a time. So it leaves full screen and closes what is open before it shows.
+  // The one thing it does not close is the control dialog: that one stays until it is answered. Anything
+  // put in its place would stand where its buttons were, with the request still open behind it.
   K.prompt = (id) => {
+    if (id !== 'mControl' && !$('mControl').classList.contains('hidden')) return false;
     if (K.viewer.theater) K.viewer.setFull(false);
     if (!$('lightbox').classList.contains('hidden')) closeLightbox();
     if (!$('backdrop').classList.contains('hidden')) window.closeModal();
     show(id);
+    return true;
   };
   // Closes its own modal only. The app closes "the open modal", which is the one shown last: when
   // another was opened on top of this prompt (Settings by its shortcut), that one stays and the
