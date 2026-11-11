@@ -910,6 +910,36 @@ function pageWorld(extra = {}) {
   ok('F10 the picker shows it the way the control dialog names a key', texts.includes('Bob (key aaaa1111)') && texts.includes('Bob (key bbbb2222)') && texts.includes('Cy') && texts.includes('bob') && !texts.includes('Bob'));
 }
 
+// E1: Esc on the control dialog is its Deny (the modal and keyboard parts of ui/app.js over the page's share code)
+{
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ui', 'app.js'), 'utf8'), part = (a, b) => src.slice(src.indexOf(a), src.indexOf(b));
+  const app = {}, keys = [], sent = [];
+  const w = pageWorld({ show: (id) => app.show(id), closeModal: () => app.close() }), K = w.K, C = K.control;
+  Object.defineProperty(pages.get(K), 'openModal', { get: () => app.open() });   // the share code reads the app's own variable
+  for (const id of ['backdrop', 'lightbox', 'mControl', 'mShareBack', 'mCast', 'mSettings']) w.$(id).classList.add('hidden');
+  const ctx = vm.createContext({ $: w.$, S: w.S, lbMsg: null, setTimeout() {}, document: { querySelectorAll: () => [], addEventListener: (ev, fn) => { if (ev === 'keydown') keys.push(fn); } } }); ctx.window = ctx; ctx.Share = w.Share;
+  vm.runInContext(part('// ---------- modals ----------', '// ---------- sidebar ----------') + part('// ---------- keyboard ----------', '// ---------- boot ----------') + '\nthis.t = { show, close, open: () => openModal };', ctx);
+  Object.assign(app, ctx.t);
+  w.$('controlNo').click = () => w.$('controlNo').onclick();   // as the page's button does it
+  const esc = () => keys.forEach((fn) => fn({ key: 'Escape', preventDefault() {} })), up = (id) => !w.$(id).classList.contains('hidden');
+  const viewer = (pub) => { const x = w.sess(pub, true); x.ctl.dc = { readyState: 'open', send: (text) => sent.push(`${pub}:${text}`) }; return x; };
+  const bob = viewer('bob'), cy = viewer('cy');
+  app.show('mSettings'); esc();
+  ok('E1 Esc on any other modal closes it as before', !up('mSettings') && !up('backdrop') && app.open() === null && sent.length === 0);
+  C.onMessage(bob, { t: 'req' });
+  const asked = up('mControl') && up('backdrop') && app.open() === 'mControl' && C.pending && C.pending.sess === bob && bob.ctl.give === 'asked';
+  esc();
+  ok('E1 Esc on the control dialog denies the request: nothing stays pending, the asker is told no, the dialog is gone', asked && C.pending === null && bob.ctl.give === 'off' && sent.join() === 'bob:{"t":"ctl","on":false}' && !up('mControl') && !up('backdrop') && app.open() === null);
+  sent.length = 0; C.onMessage(bob, { t: 'req' });
+  ok('E1 and it counts as a Deny for the cooldown: the same contact asking again at once gets no dialog', C.pending === null && !up('mControl') && sent.join() === 'bob:{"t":"ctl","on":false}');
+  sent.length = 0; C.onMessage(cy, { t: 'req' });
+  ok('E1 the next viewer who asks gets the dialog, not "busy"', C.pending && C.pending.sess === cy && up('mControl') && sent.length === 0);
+  app.show('mSettings'); esc();
+  ok('E1 Esc with Settings opened over the dialog closes Settings only: the request is still there to be answered', !up('mSettings') && up('mControl') && app.open() === 'mControl' && C.pending && C.pending.sess === cy && sent.length === 0);
+  esc();
+  ok('E1 and the Esc after that denies it', C.pending === null && cy.ctl.give === 'off' && sent.join() === 'cy:{"t":"ctl","on":false}' && !up('mControl') && !up('backdrop'));
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

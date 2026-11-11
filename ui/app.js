@@ -474,6 +474,9 @@ document.addEventListener('keydown', (e) => {
   if (S.hotkeyListening) return;
   const mod = e.metaKey || e.ctrlKey;
   if (e.key === 'Escape' && lbMsg) { closeLightbox(); return; }
+  // Esc on the control dialog is its Deny. Closing it only would leave the request open behind the page until
+  // it ran out: the asker waiting, and every other viewer who asks told that someone else has control.
+  if (e.key === 'Escape' && openModal === 'mControl') { $('controlNo').click(); return; }
   if (e.key === 'Escape' && openModal) { close(); return; }
   if (mod && e.key === 'n') { e.preventDefault(); $('btnAdd').click(); }
   if (mod && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
