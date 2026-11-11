@@ -32,11 +32,19 @@
   // only one modal shows at a time. So it leaves full screen and closes what is open before it shows.
   // The one thing it does not close is the control dialog: that one stays until it is answered. Anything
   // put in its place would stand where its buttons were, with the request still open behind it.
+  // Every other share prompt goes too, also one that another modal had been opened over (Settings by its
+  // shortcut): left up, it would be painted over the prompt that comes now, the Allow dialog included.
+  // A share-back prompt that is closed this way was not answered: it is nobody's any more, and its
+  // session may ask again with its next state frame.
+  const PROMPTS = ['mControl', 'mShareBack', 'mCast'], up = (id) => !$(id).classList.contains('hidden');
   K.prompt = (id) => {
-    if (id !== 'mControl' && !$('mControl').classList.contains('hidden')) return false;
+    if (id !== 'mControl' && up('mControl')) return false;
     if (K.viewer.theater) K.viewer.setFull(false);
-    if (!$('lightbox').classList.contains('hidden')) closeLightbox();
-    if (!$('backdrop').classList.contains('hidden')) window.closeModal();
+    if (up('lightbox')) closeLightbox();
+    const back = id !== 'mShareBack' && up('mShareBack') ? K.viewer.backFor : null;
+    if (up('backdrop')) window.closeModal();
+    for (const other of PROMPTS) if (other !== id && up(other)) K.unprompt(other);
+    if (back && !up('mShareBack')) { back.askedBack = false; if (K.viewer.backFor === back) K.viewer.backFor = null; }
     show(id);
     return true;
   };

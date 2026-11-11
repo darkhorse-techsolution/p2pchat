@@ -1034,6 +1034,50 @@ function pageWorld(extra = {}) {
   })().catch((e) => { console.log('FAIL  V7 threw:', e.stack); process.exitCode = 1; });
 }
 
+// V8: a share prompt takes every other share prompt down before it shows, and a share-back prompt closed that way may come back (review of stage D, LOW 5 and 6)
+{
+  (async () => {
+    // the page's share code over the app's own modal code (ui/app.js), as in E1
+    const src = fs.readFileSync(path.join(__dirname, '..', 'ui', 'app.js'), 'utf8'), part = (a, b) => src.slice(src.indexOf(a), src.indexOf(b));
+    const world = () => {
+      const app = {}, w = pageWorld({ show: (id) => app.show(id), closeModal: () => app.close() }), K = w.K;
+      Object.defineProperty(pages.get(K), 'openModal', { get: () => app.open() });
+      for (const id of ['backdrop', 'lightbox', 'mControl', 'mShareBack', 'mCast', 'mSettings']) w.$(id).classList.add('hidden');
+      const ctx = vm.createContext({ $: w.$, S: w.S, setTimeout() {}, document: { querySelectorAll: () => [] } }); ctx.window = ctx; ctx.Share = w.Share;
+      vm.runInContext(part('// ---------- modals ----------', '// ---------- sidebar ----------') + '\nthis.t = { show, close, open: () => openModal };', ctx);
+      Object.assign(app, ctx.t);
+      const up = () => ['mControl', 'mShareBack', 'mCast', 'mSettings', 'backdrop'].filter((id) => !w.$(id).classList.contains('hidden')).join();
+      const cy = w.sess('cy', true); cy.ctl.dc = { readyState: 'open', send() {} };            // gets my screen, and will ask for control
+      const bob = w.sess('bob', false, true);                                                 // shares to me, two way: his app asks me to share back
+      const twoWay = () => { K.sessions.onFrame({ pub: 'bob', sid: bob.id, op: 'state', screen: true, mic: false, mode: 'two', rec: false }); return idle(); };
+      return { w, K, app, up, cy, bob, twoWay };
+    };
+    let x = world(); await x.twoWay();
+    const asked = x.up() === 'mShareBack,backdrop' && x.bob.askedBack === true && x.K.viewer.backFor === x.bob;
+    x.K.control.onMessage(x.cy, { t: 'req' });
+    ok('V8 a control request while the share-back prompt is up: the Allow dialog alone is on screen', asked && x.up() === 'mControl,backdrop' && x.app.open() === 'mControl');
+    ok('V8 the share-back prompt was closed without an answer: it is nobody\'s any more, and the session may ask again', x.K.viewer.backFor === null && x.bob.askedBack === false);
+    x.w.$('controlNo').onclick(); await x.twoWay();
+    ok('V8 and with his next state frame it is back', x.up() === 'mShareBack,backdrop' && x.K.viewer.backFor === x.bob && x.bob.askedBack === true);
+
+    for (const under of ['mShareBack', 'mCast']) {
+      x = world();
+      if (under === 'mShareBack') await x.twoWay(); else x.w.$('shareCastOpen').onclick();
+      x.app.show('mSettings');                                                                // Settings by its shortcut, over the prompt
+      const before = x.up();
+      x.K.control.onMessage(x.cy, { t: 'req' });
+      ok(`V8 Settings opened over ${under}, then a control request: the Allow dialog alone, nothing left to paint over it`, before === `${under},mSettings,backdrop` && x.up() === 'mControl,backdrop' && x.app.open() === 'mControl');
+      if (under === 'mShareBack') ok('V8 and that share-back prompt may come back too', x.K.viewer.backFor === null && x.bob.askedBack === false);
+      x.w.$('controlNo').onclick();
+      ok(`V8 after the answer nothing is left on screen (${under})`, x.up() === '' && x.app.open() === null);
+    }
+    x = world(); await x.twoWay(); x.w.$('shareCastOpen').onclick();
+    ok('V8 the audience picker takes the share-back prompt down the same way', x.up() === 'mCast,backdrop' && x.K.viewer.backFor === null && x.bob.askedBack === false);
+    x = world(); await x.twoWay(); x.w.$('shareBackNo').onclick(); await x.twoWay();
+    ok('V8 a share-back prompt that was answered does not come back', x.up() === '' && x.bob.askedBack === true);
+  })().catch((e) => { console.log('FAIL  V8 threw:', e.stack); process.exitCode = 1; });
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
