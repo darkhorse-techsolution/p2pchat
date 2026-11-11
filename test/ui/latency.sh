@@ -11,6 +11,10 @@ sleep_py() { python3 -c "import time;time.sleep($1)"; }
 A() { node "$CDP" 9441 "$1"; }; B() { node "$CDP" 9442 "$1"; }
 stop() { for p in $(pgrep -f "instance=lat[AB]"); do kill "$p" 2>/dev/null; done; }
 stop; sleep_py 1
+# The two logs outlive a run (only the data folders are removed below), so an ERROR line of an earlier run
+# would be counted again every time: remember where each log ends now and count what this run adds.
+LOGS="$HOME/Library/Logs/P2P Chat"; lines() { if [ -f "$1" ]; then wc -l < "$1" | tr -d ' '; else echo 0; fi; }
+LA0=$(lines "$LOGS/p2pchat-latA.log"); LB0=$(lines "$LOGS/p2pchat-latB.log")
 rm -rf "$HOME/Library/Application Support/P2P Chat (latA)" "$HOME/Library/Application Support/P2P Chat (latB)" "$HOME/.config/P2P Chat (latA)" "$HOME/.config/P2P Chat (latB)" 2>/dev/null
 "$ROOT/run.sh" --instance=latA --remote-debugging-port=9441 --x=20 --y=60 --use-fake-device-for-media-stream --no-protection $LAT_FLAGS >/dev/null 2>&1 &
 "$ROOT/run.sh" --instance=latB --remote-debugging-port=9442 --x=960 --y=60 --use-fake-device-for-media-stream $LAT_FLAGS >/dev/null 2>&1 &
@@ -34,5 +38,10 @@ echo "sharer q:  $(A "$SQ")"
 echo "viewer line: $(B 'document.getElementById("viewerStats").textContent')"
 echo "sharer pill: $(A 'document.getElementById("sharePill").title')"
 echo "errors in the page consoles and logs:"
-for n in latA latB; do L="$HOME/Library/Logs/P2P Chat/p2pchat-$n.log"; [ -f "$L" ] && { grep -c " ERROR " "$L" | sed "s/^/  $n ERROR lines: /"; grep " share " "$L" | tail -1 | cut -c1-330 | sed "s/^/  $n log: /"; }; done
+for n in latA latB; do
+  L="$LOGS/p2pchat-$n.log"; [ -f "$L" ] || continue
+  [ "$n" = latA ] && N0=$LA0 || N0=$LB0
+  [ "$(lines "$L")" -lt "$N0" ] && N0=0   # the app started a new file (it rotates at 2 MB): all of it is this run's
+  tail -n +$((N0 + 1)) "$L" | grep -c " ERROR " | sed "s/^/  $n ERROR lines: /"; grep " share " "$L" | tail -1 | cut -c1-330 | sed "s/^/  $n log: /"
+done
 stop; sleep_py 1; echo "instances left: $(pgrep -f 'instance=lat[AB]' | wc -l | tr -d ' ')"
