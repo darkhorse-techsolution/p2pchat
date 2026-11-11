@@ -1,10 +1,13 @@
 'use strict';
 // Screen share: the sessions. The registry (one session per contact), each session's peer connection,
 // the signaling that rides the chat's `share` frames, the data channels, the stats poll, and the one
-// function that ends a session.
+// function that ends a session. What a peer sends is kept by track kind (remote.video, remote.audio):
+// which MediaStream a track came on is never read, so their screen and their voice may come on one
+// stream or on two.
 //
-// Reads from app.js: S, $, toast, contact, ipcErr, renderContacts. Reads at call time: K.tune, K.paint,
-// K.viewer, K.rec, and K.control and K.cast (both in ui/share.js until they have files of their own).
+// Reads from app.js: S, toast, contact, ipcErr, renderContacts. Reads at call time: K.tune, K.paint,
+// K.paintStats, K.viewer, K.rec, and K.control and K.cast (both in ui/share.js until they have files of
+// their own).
 (() => {
   const K = window.ShareKit;
   const newSid = () => Math.random().toString(36).slice(2, 12);
@@ -24,7 +27,7 @@
     let markSeen;
     const sess = { pub, id: sid || newSid(), pc: null, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null,
-      remote: { stream: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
+      remote: { video: null, audio: null, view: null, audioEl: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
       closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null,
       ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null } };
     map.set(pub, sess);
@@ -44,11 +47,11 @@
     };
     pc.onicecandidate = ({ candidate }) => send(sess, { op: 'ice', candidate: candidate ? candidate.toJSON() : null });
     pc.ontrack = (e) => {
-      sess.remote.stream = e.streams[0] || sess.remote.stream || new MediaStream();
-      if (!e.streams[0]) sess.remote.stream.addTrack(e.track);
-      K.tune.receiver(e.receiver, e.track.kind);
-      e.track.onmute = () => K.paint(); e.track.onunmute = () => K.paint(); e.track.onended = () => K.paint();
-      K.viewer.attachRemote(sess); K.paint();
+      const t = e.track, r = sess.remote;
+      if (t.kind === 'video') { if (r.video !== t) { r.video = t; r.view = new MediaStream([t]); } K.tune.receiver(e.receiver, 'video'); }   // view: what the video element plays, the picture alone
+      else { r.audio = t; K.tune.receiver(e.receiver, 'audio'); K.viewer.audioFor(sess); }
+      t.onmute = () => K.paint(); t.onunmute = () => K.paint(); t.onended = () => K.paint();
+      K.rec.sync(sess); K.paint();
     };
     pc.ondatachannel = (e) => adoptChannel(sess, e.channel);
     pc.onconnectionstatechange = () => {
@@ -57,6 +60,16 @@
       else K.paint();
     };
     sess.statsTimer = setInterval(() => pollStats(sess), 2000);
+  }
+
+  // A track the peer took off the connection stays on its transceiver for good, muted. The stream it came
+  // on dropped it by itself; that stream is not read any more, so the track is forgotten here. Kept, it
+  // would be recorded or shown in place of a track of their next share that has not arrived yet when the
+  // `state` frame announces it. Run with an answer in place: the directions are then the agreed ones.
+  function dropGone(sess) {
+    const r = sess.remote, live = (t) => sess.pc.getTransceivers().some((tr) => tr.receiver.track === t && (tr.currentDirection === 'sendrecv' || tr.currentDirection === 'recvonly'));
+    if (r.video && !live(r.video)) { r.video = null; r.view = null; }
+    if (r.audio && !live(r.audio)) r.audio = null;
   }
 
   // Signaling never retries and a connection reports failure only once it has started, so a lost offer
@@ -100,8 +113,7 @@
       sess.stats = (sess.remote.screen ? `${w}×${h} · ${fps} fps · ${(kbpsIn / 1000).toFixed(1)} Mb/s in` + (q.out ? ` · buf ${q.bufMs} (+${q.holdMs} sync) want ${q.wantMs} dec ${q.decMs} ms · shown +${q.shownMs} ms · nack ${q.nack} frz ${q.freeze}` : '') : '')
         + (sess.screenTrack ? `${sess.remote.screen ? ' · ' : ''}${(kbpsOut / 1000).toFixed(1)} Mb/s out` + (q.encN ? ` · enc ${Math.round(q.inFps || 0)}>${Math.round(q.encFps || 0)} fps ${q.encMs} ms skip ${q.skip}${q.limit && q.limit !== 'none' ? ' ' + q.limit : ''} ${q.hint}` : '') : '')
         + (codec ? ` · ${codec}` : '') + (rtt >= 0 ? ` · ${rtt} ms` : '') + (path ? ` · ${path}` : '');
-      $('viewerStats').textContent = sess.stats;
-      $('sharePill').title = sess.stats;
+      K.paintStats(sess);
       if ((sess.polls = (sess.polls || 0) + 1) % 5 === 0) window.api.log(`${sess.id} ${sess.stats}`   // every 10 s, the last 2 s window, to the app log on both sides
         + (q.out ? ` | rx ${q.rx}>${q.out} drop ${q.drop} loss ${q.loss} proc ${q.procMs} e2e ${q.e2eMs}/${q.e2eWorst} voice ${q.voiceMs}+${q.voiceDevMs} (+${q.voiceHoldMs} sync) ${q.dec || '?'}` : '')
         + (q.encN ? ` | tx ${q.outW}x${q.outH} tgt ${kb(q.target)} bwe ${kb(q.avail)} pace ${q.paceMs} key ${q.keys} huge ${q.huge} ${q.impl || '?'} ${q.svc || '-'}` : '')
@@ -175,6 +187,7 @@
         try { await pc.setRemoteDescription(d); } finally { sess.settingAnswer = false; }
         if (sess.closed) return;
         if (d.type === 'offer') { await pc.setLocalDescription(); if (sess.closed) return; send(sess, { op: 'sdp', description: pc.localDescription.toJSON() }); }
+        dropGone(sess);
       } else if (ev.op === 'ice') {
         try { await pc.addIceCandidate(ev.candidate === null ? undefined : ev.candidate); } catch (e) { if (!sess.ignoreOffer && !sess.closed) console.warn('ice', e.message); }
       } else if (ev.op === 'state') onState(sess, ev);
@@ -184,11 +197,11 @@
     const was = sess.remote.screen, wasRec = sess.remote.rec;
     sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
     if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
-    if (ev.screen && !was) { K.viewer.attachRemote(sess); if (S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`); }
+    if (ev.screen && !was && S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`);
     if (!ev.screen && (sess.ctl.take || sess.ctl.asked)) { K.control.stopTaking(sess); clearTimeout(sess.ctl.askTimer); sess.ctl.asked = false; }
     if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; K.viewer.askBack(sess); }
     if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
-    K.paint(); renderContacts();
+    K.rec.sync(sess); K.paint(); renderContacts();
   }
   function onStatus(ev) { const sess = map.get(ev.pub); if (sess && ev.status !== 'online') close(sess, 'offline'); }
 

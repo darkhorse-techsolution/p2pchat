@@ -115,7 +115,7 @@
     switch (m.t) {
       case 'cur':   // the shape of their pointer: drawn as my own while I control
         sess.ctl.cursor = cursorCss(m);
-        if (sess.ctl.take) $('viewerVideo').style.cursor = sess.ctl.cursor;
+        K.viewer.applyCtl();
         return;
       case 'req':   // they want my mouse and keyboard
         if (!sess.screenTrack) { K.sessions.dc(sess, 'ctl', { t: 'ctl', on: false, why: 'notsharing' }); return; }
@@ -198,29 +198,31 @@
   function startTaking(sess) {
     sess.ctl.take = true; sess.ctl.move = null; sess.ctl.moveAt = 0;
     clearTimeout(sess.ctl.flush); sess.ctl.flush = null;
-    const v = $('viewerVideo'); v.classList.add('ctl'); v.style.cursor = sess.ctl.cursor || ''; v.focus();
-    v.addEventListener(K.tune.MOVE_EV, K.viewer.onMove);
+    K.viewer.applyCtl();
   }
   function stopTaking(sess) {
     clearTimeout(sess.ctl.flush); sess.ctl.flush = null; sess.ctl.move = null;
     if (sess.ctl.take) { sess.ctl.take = false; K.sessions.dc(sess, 'ctl', { t: 'r' }); }
-    const v = $('viewerVideo'); v.classList.remove('ctl'); v.style.cursor = ''; sess.ctl.cursor = null;
-    v.removeEventListener(K.tune.MOVE_EV, K.viewer.onMove);
+    sess.ctl.cursor = null;
+    K.viewer.applyCtl();
   }
-  const taking = () => { const sess = pick(); return sess && sess.ctl.take && sess.remote.screen ? sess : null; };   // the session whose screen I drive right now, or null
+  const taking = () => { const sess = K.viewer.bound; return sess && sess.ctl.take && sess.remote.screen ? sess : null; };   // the session whose screen I drive right now (the one on the video), or null
   // a session closes: control of either side's screen ends with it
   function controlClosed(sess) {
     if (sess.ctl.give === 'on') window.api.controlRevoke().catch(() => {});
     clearTimeout(sess.ctl.flush); clearTimeout(sess.ctl.askTimer);
     if (!$('mControl').classList.contains('hidden')) window.closeModal();
-    $('viewerVideo').classList.remove('ctl'); $('viewerVideo').removeEventListener(K.tune.MOVE_EV, K.viewer.onMove);
   }
   K.control = { onData: onCtl, stopTaking, isTaking: () => !!taking(), sessionClosed: controlClosed };   // what the other share files call, until share/control.js exists
 
   function onSettings() { for (const sess of map.values()) { sess.recWanted = !!S.settings.recordShares; K.rec.sync(sess); if (S.current === sess.pub) K.rec.paint(sess); } }
 
   // --- UI ---------------------------------------------------------------------
+  // Only draws. What a share needs done is done where it happens (a recording in share/record.js, the
+  // stats line in K.paintStats); the first line is the one exception: it points the video at the open
+  // chat's share and leaves full screen when that share is gone.
   function render() {
+    K.viewer.rebind();
     const pub = S.current, sess = cur(), mine = !!sess, conn = mine && sess.pc ? sess.pc.connectionState : '';   // no pc yet: still connecting
     const sharing = !!(mine && sess.screenTrack), watching = !!(mine && sess.remote.screen);
     const btn = $('btnShare'); btn.textContent = sharing ? '■ Stop sharing' : '⇡ Share screen'; btn.classList.toggle('on', sharing);
@@ -232,17 +234,16 @@
     $('btnStopCtl').classList.toggle('hidden', !(sharing && sess.ctl.give === 'on'));
     const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
     if (watching) {
-      $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = sess.micTrack && sess.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = sess.muted ? '🔇' : '🔊'; K.viewer.attachRemote(sess);
+      $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = sess.micTrack && sess.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = sess.muted ? '🔇' : '🔊';
       const cb = $('viewerCtl'); cb.textContent = sess.ctl.take ? '🖱 Controlling' : sess.ctl.asked ? '🖱 Asking…' : '🖱 Control'; cb.classList.toggle('on', sess.ctl.take);
       cb.title = sess.ctl.take ? 'Stop controlling their screen' : sess.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard';
     }
     document.getElementById('chat').classList.toggle('with-viewer', watching);
     if (mine) K.rec.paint(sess);
-    if (K.viewer.theater && !watching) K.viewer.setFull(false);
-    for (const x of map.values()) K.rec.sync(x);
   }
   const sessionPub = () => { const sess = pick(); return sess ? sess.pub : null; };
   K.paint = render;
+  K.paintStats = (sess) => { if (K.viewer.bound === sess) $('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
 
   $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if (sess && sess.screenTrack) stopSharing(sess); else start(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
   $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
@@ -250,7 +251,7 @@
   document.addEventListener('click', () => $('shareMenu').classList.add('hidden'));
   $('btnMic').onclick = () => { const sess = cur(); if (sess) toggleMic(sess); };
   $('viewerTalk').onclick = () => { const sess = cur(); if (sess) toggleMic(sess); };
-  $('viewerMute').onclick = () => { const sess = cur(); if (!sess) return; sess.muted = !sess.muted; $('viewerVideo').muted = sess.muted; render(); };
+  $('viewerMute').onclick = () => { const sess = K.viewer.bound; if (!sess) return; sess.muted = !sess.muted; if (sess.remote.audioEl) sess.remote.audioEl.muted = sess.muted; render(); };
   $('viewerShareBack').onclick = () => { const sess = cur(); if (sess) start(sess.pub, 'two'); };
   $('viewerRec').onclick = () => { const sess = cur(); if (sess) K.rec.toggle(sess); };
   $('viewerEnd').onclick = () => { const sess = cur(); if (sess) K.sessions.end(sess); };
@@ -265,7 +266,7 @@
   $('controlNo').onclick = () => { window.closeModal(); const sess = giving('asked'); if (sess) giveUp(sess, 'denied'); };
 
   // debug surface for the UI test (test/ui/share.sh): session internals and audio RTP counters
-  const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
+  const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, in: { video: !!x.remote.video, audio: !!x.remote.audio }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
     enc: x.screenSender ? x.screenSender.getParameters().encodings[0] || null : null,
     ctl: { give: x.ctl.give, take: x.ctl.take, asked: x.ctl.asked, sent: x.ctl.sent, recv: x.ctl.recv, chans: x.ctl.chans.map((c) => `${c.label}:${c.readyState}`) } } : null; };
   const debugAll = () => ({ sessions: Object.fromEntries([...map.values()].map((x) => [x.pub.slice(0, 8), debug(x.pub)])) });

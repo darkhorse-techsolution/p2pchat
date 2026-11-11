@@ -1,9 +1,11 @@
 'use strict';
 // Screen share: recording what they send.
-// MediaRecorder on a snapshot of the remote stream (their screen, their voice), 1 s pieces
+// MediaRecorder on a snapshot of their two tracks (their screen, their voice), 1 s pieces
 // handed to the main process, which appends them to a .webm in the Videos folder. Wanted
 // by the viewer's button for this share, or by the Settings switch for every share, the
-// running one included; the state frame carries `rec` so the sharer sees it.
+// running one included; the state frame carries `rec` so the sharer sees it. A recording
+// starts and stops on what happens to its session (a track arrives, a `state` frame, the
+// switch, the button, the end of the recording before it), never because something repaints.
 //
 // Reads from app.js: S, $, toast, ipcErr. Reads K.sessions.sendState and K.paint at call time.
 (() => {
@@ -11,7 +13,7 @@
   const REC_MIME = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
   const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} KB`);
   const fmtClock = (ms) => { const t = Math.floor(ms / 1000); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
-  const recReady = (sess) => { const st = sess.remote.stream; return !!(sess.remote.screen && st && st.getVideoTracks().length && (!sess.remote.mic || st.getAudioTracks().length)); };
+  const recReady = (sess) => !!(sess.remote.screen && sess.remote.video && (!sess.remote.mic || sess.remote.audio));
   async function startRecording(sess) {
     if (sess.rec || sess.recStarting || !recReady(sess)) return;
     if (!REC_MIME) { toast('Recording is not supported here', 'err'); sess.recWanted = false; return; }
@@ -20,7 +22,7 @@
     try {
       ({ id, file } = await window.api.recordStart(sess.pub));
       if (sess.closed) { window.api.recordStop(id).catch(() => {}); return; }   // the share ended while the file was being created: main removes the empty file
-      const stream = new MediaStream(sess.remote.stream.getTracks());   // a snapshot: tracks added later never disturb the recorder
+      const stream = new MediaStream([sess.remote.video, sess.remote.audio].filter(Boolean));   // a snapshot: tracks added later never disturb the recorder
       const recorder = new MediaRecorder(stream, { mimeType: REC_MIME, videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 96_000 });
       const rec = { id, file, recorder, since: Date.now(), bytes: 0, q: Promise.resolve(), timer: null, failed: '' };
       recorder.ondataavailable = (e) => {
@@ -53,7 +55,7 @@
     if (saved) K.rec.last = saved.file;
     if (rec.failed) toast(`Recording stopped: ${rec.failed}${saved ? ` (${fmtBytes(saved.bytes)} kept)` : ''}`, 'err');
     else if (saved) toast(`Recording saved (${fmtBytes(saved.bytes)}): ${saved.file}`, 'ok');
-    if (!sess.closed) { K.sessions.sendState(sess); K.paint(); }
+    if (!sess.closed) { K.sessions.sendState(sess); syncRecording(sess); K.paint(); }   // still wanted (the recorder stopped by itself): the next one starts here
   }
   function syncRecording(sess) {
     if (sess.recWanted && !sess.rec) startRecording(sess);      // waits for the tracks if they are not there yet

@@ -1,28 +1,53 @@
 'use strict';
-// Screen share: what the viewer has on screen. The one <video> their screen plays in, full screen,
-// the pointer and key listeners that feed remote control, and the "share yours too" prompt.
+// Screen share: what the viewer has on screen and hears. The one <video> their screen plays in (always
+// muted), an <audio> per session for their voice, full screen, the pointer and key listeners that feed
+// remote control, and the "share yours too" prompt.
 //
 // Reads from app.js: S, $, toast, contact, ipcErr, show, window.closeModal. Reads K.sessions and K.tune,
 // and K.control.isTaking at call time.
 (() => {
   const K = window.ShareKit;
-  const map = K.sessions.map;
-  const cur = () => map.get(S.current) || null;                                             // the session of the open chat
-  const pick = (pub) => map.get(pub) || cur() || map.values().next().value || null;         // ... else the oldest
-  const taking = () => (K.control.isTaking() ? pick() : null);   // the session whose screen I drive right now, or null
+  const taking = () => (K.control.isTaking() ? K.viewer.bound : null);   // the session whose screen I drive right now, or null
 
-  function attachRemote(sess) {
-    const v = $('viewerVideo');
-    if (sess.remote.stream && v.srcObject !== sess.remote.stream) { v.srcObject = sess.remote.stream; v.muted = sess.muted; v.play().catch(() => {}); }
+  // --- the video and the sound ---------------------------------------------------------------
+  // First thing in every paint: which session the one <video> shows (K.viewer.bound: the session of the
+  // open chat while they share a screen, else none). Nothing else assigns the video's source; its `ctl`
+  // class and its pointer are set by applyCtl alone.
+  function rebind() {
+    const here = K.sessions.get(S.current), next = here && here.remote.screen ? here : null, prev = K.viewer.bound;
+    if (next !== prev) {
+      if (prev && !prev.closed && prev.ctl.take) K.sessions.dc(prev, 'ctl', { t: 'r' });   // nothing stays pressed on a screen I stopped looking at
+      K.viewer.bound = next;
+    }
+    if (K.viewer.theater && !next) setFull(false);         // the watched share went away: full screen goes with it
+    const v = $('viewerVideo'), view = next ? next.remote.view : null;
+    v.muted = true;                                        // their voice plays from the session's <audio>
+    if (v.srcObject !== view) { v.srcObject = view; if (view) v.play().catch(() => {}); }
+    applyCtl();
+  }
+  // Their voice has an element of the session's own: it is heard whichever chat is open, and the video
+  // never carries sound.
+  function audioFor(sess) {
+    let a = sess.remote.audioEl;
+    if (!a) { a = sess.remote.audioEl = document.createElement('audio'); a.autoplay = true; a.dataset.pub = sess.pub; $('shareAudio').appendChild(a); }
+    a.srcObject = new MediaStream([sess.remote.audio]); a.muted = sess.muted; a.play().catch(() => {});
+  }
+  // the video takes my pointer and keys only while I drive the session it shows
+  function applyCtl() {
+    const v = $('viewerVideo'), on = !!K.control.isTaking(), was = v.classList.contains('ctl');
+    v.classList.toggle('ctl', on); v.style.cursor = on ? K.viewer.bound.ctl.cursor || '' : '';
+    if (on && !was) { v.addEventListener(K.tune.MOVE_EV, onMove); v.focus(); }
+    if (!on && was) v.removeEventListener(K.tune.MOVE_EV, onMove);
   }
 
   // The "share yours too" prompt belongs to the session that asked (K.viewer.backFor): its Yes shares with
   // that contact or with nobody.
   function askBack(sess) { K.viewer.backFor = sess; $('shareBackName').textContent = contact(sess.pub)?.name || 'They'; show('mShareBack'); }
   function sessionClosed(sess) {
+    const a = sess.remote.audioEl;
+    if (a) { a.srcObject = null; a.remove(); sess.remote.audioEl = null; }
     if (K.viewer.backFor === sess) { K.viewer.backFor = null; if (!$('mShareBack').classList.contains('hidden')) window.closeModal(); }   // the prompt names this contact: it must not outlive the session
-    const v = $('viewerVideo'); v.srcObject = null;
-    if (K.viewer.theater) setFull(false);
+    if (K.viewer.bound === sess) K.viewer.bound = null;    // the paint that ends every close takes the video and full screen down
   }
 
   // where on their display the pointer is: fractions of the video picture (object-fit: contain leaves bars)
@@ -46,15 +71,14 @@
   }
   async function setFull(on) {
     on = on === undefined ? !K.viewer.theater : !!on;
-    const sess = pick();
-    if (on && !(sess && sess.remote.screen)) return;
+    if (on && !K.viewer.bound) return;
     if (on === K.viewer.theater) return;
     let got = false; try { got = await window.api.fullscreen(on); } catch (e) { toast(ipcErr(e), 'err'); }
     applyTheater(!!got);
   }
-  function onFullscreen(ev) { const sess = pick(); applyTheater(!!ev.on && !!(sess && sess.remote.screen)); }
+  function onFullscreen(ev) { applyTheater(!!ev.on && !!K.viewer.bound); }
 
-  K.viewer = { theater: false, backFor: null, attachRemote, onMove, setFull, onFullscreen, askBack, sessionClosed };
+  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, sessionClosed };
 
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs
@@ -62,7 +86,7 @@
   {
     const v = $('viewerVideo');
     const tick = (_t, md) => {   // per shown frame: last packet in -> on screen, and the sharer's capture stamp -> on screen
-      const sess = pick();
+      const sess = K.viewer.bound;
       if (sess && typeof md.receiveTime === 'number') {
         const f = sess.pic || (sess.pic = { n: 0, show: 0, c: 0, e2e: 0, worst: 0 });
         f.n++; f.show += md.expectedDisplayTime - md.receiveTime;
