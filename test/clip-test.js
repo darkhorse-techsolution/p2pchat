@@ -197,5 +197,17 @@ const DISPLAY = { id: 1 };
   ok('V4 the next plain copy is sent', m.texts.join() === `${r.id}:plain`);
   m.clip.stop('test');
 
+  // V5: a look that is under way when the link stops does not read the clipboard after the stop (review of stage D, LOW 2)
+  for (const role of ['give', 'take']) {
+    m = machine(); m.text = 'x'; tok = role === 'give' ? await m.allow('bob', true) : null;
+    r = await m.clip.start({ pub: 'bob', role, token: tok });
+    let calls = 0; const has5 = m.backend.has;
+    m.backend.has = async (f) => { if (++calls === 2) m.clip.stop('control ended'); return has5(f); };   // the link ends while the markers are being asked about
+    m.text = 'copied as control ends'; const reads5 = m.reads;
+    if (role === 'give') await fire(); else { m.clip.poke(r.id); await settle(); }
+    m.backend.has = has5;
+    ok(`V5 ${role}: the link stopped between the marker check and the read: no read follows, nothing is sent`, calls >= 2 && m.clip.status().on === false && m.reads === reads5 && m.texts.length === 0);
+  }
+
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.log('FAIL  harness threw:', e.stack); process.exit(1); });

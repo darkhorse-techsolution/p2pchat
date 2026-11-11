@@ -69,7 +69,7 @@ function createClipLink({ backend, platform, enabled, grant }) {
       l.queued = false;
       if (link !== l) return;
       if (!may(l)) { stop('not allowed'); return; }
-      if (await concealed()) return;
+      if (await concealed() || link !== l) return;   // the link can end while the markers are asked about: no read follows a stop
       const t = norm(await backend.readText());
       if (link !== l || !t || t === l.last) return;
       if (await concealed() || link !== l) return;
