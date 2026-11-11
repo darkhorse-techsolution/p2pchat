@@ -899,6 +899,17 @@ function pageWorld(extra = {}) {
   ok('F9 any other modal is closed as before: the backdrop goes', !up('backdrop') && t.open() === null && seen === 0);
 }
 
+// F10: two contacts that show the same name are told apart in the picker by their key
+{
+  const w = pageWorld(), K = w.K;
+  w.S.contacts.push({ pub: 'aaaa1111zzzz', name: 'Bob', status: 'online' }, { pub: 'cccc3333zzzz', name: 'Cy', status: 'online' }, { pub: 'bbbb2222zzzz', name: 'Bob', status: 'online' }, { pub: 'dddd4444zzzz', name: 'bob', status: 'offline' });
+  const r = K.cast.rows(w.S.contacts, null);
+  ok('F10 rows of the same name carry the first eight characters of the key, in a fixed order; the others carry none', r.map((x) => `${x.name}:${x.key}`).join() === 'bob:,Bob:aaaa1111,Bob:bbbb2222,Cy:' || r.map((x) => `${x.name}:${x.key}`).join() === 'Bob:aaaa1111,Bob:bbbb2222,bob:,Cy:');
+  const before = new Set(w.els.keys()); w.$('shareCastOpen').onclick();
+  const texts = [...w.els].filter(([id]) => !before.has(id)).map(([, e]) => e.textContent);
+  ok('F10 the picker shows it the way the control dialog names a key', texts.includes('Bob (key aaaa1111)') && texts.includes('Bob (key bbbb2222)') && texts.includes('Cy') && texts.includes('bob') && !texts.includes('Bob'));
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

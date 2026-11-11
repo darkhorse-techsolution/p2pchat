@@ -95,7 +95,7 @@
     for (const r of K.cast.rows(S.contacts, S.current)) {
       const row = document.createElement('label'), box = document.createElement('input'), name = document.createElement('span'), st = document.createElement('span');
       row.className = 'check'; box.type = 'checkbox'; box.dataset.pub = r.pub; if (r.free) box.dataset.free = '1'; box.checked = r.ticked; box.onchange = syncPicker;
-      name.textContent = r.name; st.className = 'muted small'; st.textContent = r.state;
+      name.textContent = r.key ? `${r.name} (key ${r.key})` : r.name; st.className = 'muted small'; st.textContent = r.state;
       row.append(box, name, st); root.appendChild(row);
     }
     $('castHint').textContent = K.capturable() ? 'This window is not hidden from screen capture here: viewers also see this list and your chats.' : '';

@@ -274,11 +274,16 @@
   }
   // The picker's rows, by name. Ticked when it opens: the audience, or with none the open chat. `free`:
   // the box can be ticked at all (a contact who is offline cannot be added; one in the audience can stay).
-  const rows = (contacts, open) => [...contacts].sort((a, b) => byName(a.name, b.name)).map((c) => {
-    const m = cast.members.get(c.pub), online = c.status === 'online';
-    return { pub: c.pub, name: c.name, free: !!m || online, ticked: m ? true : !cast.members.size && c.pub === open && online,
-      state: m ? (m.state === 'live' ? 'watching' : m.state === 'joining' ? 'joining…' : 'reconnecting…') : online ? '' : 'offline' };
-  });
+  // `key`: a contact picks its own name, so two can show the same one. Rows that would read alike also
+  // carry the start of the contact's key, as the control dialog shows it, so the tick goes to the right one.
+  const rows = (contacts, open) => {
+    const same = new Map(); for (const c of contacts) same.set(c.name, (same.get(c.name) || 0) + 1);
+    return [...contacts].sort((a, b) => byName(a.name, b.name) || byName(a.pub, b.pub)).map((c) => {
+      const m = cast.members.get(c.pub), online = c.status === 'online';
+      return { pub: c.pub, name: c.name, key: same.get(c.name) > 1 ? c.pub.slice(0, 8) : '', free: !!m || online, ticked: m ? true : !cast.members.size && c.pub === open && online,
+        state: m ? (m.state === 'live' ? 'watching' : m.state === 'joining' ? 'joining…' : 'reconnecting…') : online ? '' : 'offline' };
+    });
+  };
   // a box that takes no tick: not free, or the audience is full with `n` ticked
   const locked = (free, ticked, n) => !ticked && (!free || n >= K.tune.MAX_AUDIENCE);
 
