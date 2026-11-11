@@ -938,6 +938,12 @@ function pageWorld(extra = {}) {
   ok('E1 Esc with Settings opened over the dialog closes Settings only: the request is still there to be answered', !up('mSettings') && up('mControl') && app.open() === 'mControl' && C.pending && C.pending.sess === cy && sent.length === 0);
   esc();
   ok('E1 and the Esc after that denies it', C.pending === null && cy.ctl.give === 'off' && sent.join() === 'cy:{"t":"ctl","on":false}' && !up('mControl') && !up('backdrop'));
+  const dee = viewer('dee'); sent.length = 0; C.onMessage(dee, { t: 'req' });
+  const deeAsked = up('mControl') && C.pending && C.pending.sess === dee;
+  w.$('backdrop').onclick();
+  ok('E1 a click beside the control dialog denies the request too', deeAsked && C.pending === null && dee.ctl.give === 'off' && sent.join() === 'dee:{"t":"ctl","on":false}' && !up('mControl') && !up('backdrop') && app.open() === null);
+  app.show('mSettings'); w.$('backdrop').onclick();
+  ok('E1 a click beside any other modal closes it as before', !up('mSettings') && !up('backdrop') && app.open() === null);
 }
 
 // V1: clipboard off takes an offer of mine that is still out with it (review of stage D, HIGH 1)

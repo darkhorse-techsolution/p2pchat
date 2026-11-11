@@ -77,7 +77,8 @@ function close() {
 }
 window.closeModal = close; // the share files are closures of their own: they close a modal through this name (share/kit.js: K.prompt, K.unprompt)
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = close));
-$('backdrop').onclick = close;
+// A click beside the control dialog is its Deny, like Esc: closing it only would leave the request open unseen.
+$('backdrop').onclick = () => { if (openModal === 'mControl') $('controlNo').click(); else close(); };
 
 // ---------- sidebar ----------
 const prettyHotkey = (a) => { const mac = window.api.platform === 'darwin'; const m = { CommandOrControl: mac ? '⌘' : 'Ctrl', Super: mac ? '⌘' : 'Win', Meta: mac ? '⌘' : 'Win', Command: '⌘', Control: mac ? '⌃' : 'Ctrl', Alt: mac ? '⌥' : 'Alt', Shift: mac ? '⇧' : 'Shift', Space: mac ? 'Space' : 'Space', Return: mac ? '↩' : 'Enter', Backspace: mac ? '⌫' : 'Backspace' }; return String(a || '').split('+').map((k) => m[k] || k).join(mac ? '' : '+'); };
