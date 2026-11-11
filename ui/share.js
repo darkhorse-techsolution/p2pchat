@@ -42,31 +42,68 @@
     K.viewer.rebind();
     const pub = S.current, sess = cur(), mine = !!sess, conn = mine && sess.pc ? sess.pc.connectionState : '';   // no pc yet: still connecting
     const sharing = !!(mine && sess.screenTrack), watching = !!(mine && sess.remote.screen);
-    const btn = $('btnShare'); btn.textContent = sharing ? '■ Stop sharing' : '⇡ Share screen'; btn.classList.toggle('on', sharing);
-    btn.title = sharing ? 'Stop sending your screen' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
-    $('btnShareMode').classList.toggle('hidden', sharing);
-    const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(sess.micTrack && sess.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = on ? 'Mute your microphone' : sess.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone'; }
-    const pill = $('sharePill'); const state = !mine ? '' : conn === 'connected' || conn === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') : conn === 'failed' ? 'Failed' : 'Connecting…';
-    pill.classList.toggle('hidden', !state); pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle');
+    const viewers = K.cast.count(), casting = K.capture.state === 'live' || K.cast.members.size > 0;   // my screen goes out already, to someone
+    const btn = $('btnShare'); btn.textContent = sharing ? '■ Stop sharing' : casting ? '＋ Add to share' : '⇡ Share screen'; btn.classList.toggle('on', sharing);
+    btn.title = sharing ? (viewers >= 2 ? 'Stop sending your screen to this contact; the others keep it' : 'Stop sending your screen') : casting ? 'Send the screen you are sharing to this contact as well, one click' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
+    $('shareMenu').querySelectorAll('button[data-mode]').forEach((b) => b.classList.toggle('hidden', sharing));   // one way or two way is chosen before a share; the ▾ stays for the audience picker
+    const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(sess.micTrack && sess.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = (on ? 'Mute your microphone' : sess.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone') + (sharing && K.cast.members.size >= 2 ? ' for everyone you share with' : ''); }
+    const pill = $('sharePill'); const state = !mine ? '' : conn === 'connected' || conn === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') + (sharing && viewers >= 2 ? ` · ${viewers} viewers` : '') : conn === 'failed' ? 'Failed' : 'Connecting…';
+    pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle') + (state ? '' : ' hidden');   // the class list in one piece: set after `hidden`, it used to put an empty pill back on screen
     // whoever drives my screen can be stopped from every chat; elsewhere than in their own the button says who it is
     const own = K.control.owner, driven = !!own && own.sess.ctl.give === 'on', stop = $('btnStopCtl');
     stop.classList.toggle('hidden', !driven); stop.textContent = driven && own.sess.pub !== pub ? `✋ Stop control (${K.nameOf(own.sess.pub)})` : '✋ Stop control';
     const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
     if (watching) {
       $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = sess.micTrack && sess.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = sess.muted ? '🔇' : '🔊';
+      $('viewerAud').textContent = sess.remote.cast >= 2 ? ` · ${sess.remote.cast} watching` : '';   // the sharer said how many get this screen
+      $('viewerTalk').title = `Send your microphone: only ${K.nameOf(pub)} hears you`;
       const cb = $('viewerCtl'); cb.textContent = sess.ctl.take ? '🖱 Controlling' : sess.ctl.asked ? '🖱 Asking…' : '🖱 Control'; cb.classList.toggle('on', sess.ctl.take);
       cb.title = sess.ctl.take ? 'Stop controlling their screen' : sess.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard';
     }
     document.getElementById('chat').classList.toggle('with-viewer', watching);
     if (mine) { K.rec.paint(sess); K.paintStats(sess); }   // the stats line too: the poll writes it only every 2 s, and not while this chat was closed
+    // The audience bar, above whatever chat is open: who gets my screen, and Stop for all of them. A share
+    // with the one contact whose chat is open has no bar: it looks as it always did. While someone drives
+    // my screen the bar stays on top of a full-screen viewer (class ctl).
+    const m = K.cast.members, bar = $('castBar'), barOn = m.size >= 2 || (m.size === 1 && !m.has(pub));
+    bar.className = 'cast-bar' + (driven ? ' ctl' : '') + (barOn ? '' : ' hidden');
+    if (barOn) { const line = K.cast.text(K.capturable()); $('castBarText').textContent = line; $('castBarText').title = line; $('castBarStopCtl').classList.toggle('hidden', !driven); }
+  }
+  // --- the audience picker ------------------------------------------------------------------
+  // Built when it opens and not touched by paint: the boxes must not move under the pointer. The boxes
+  // themselves hold what was ticked.
+  function syncPicker() {
+    const boxes = [...$('castList').querySelectorAll('input')], n = boxes.filter((b) => b.checked).length, running = K.capture.state !== 'idle';
+    for (const b of boxes) b.disabled = K.cast.locked(!!b.dataset.free, b.checked, n);
+    $('castCount').textContent = `${n} of ${K.tune.MAX_AUDIENCE}`;
+    const go = $('castGo'); go.textContent = running ? 'Update' : 'Start sharing'; go.disabled = !n && !running;
+    $('castStop').classList.toggle('hidden', !running);
+  }
+  function openPicker() {
+    const root = $('castList'); root.textContent = '';
+    for (const r of K.cast.rows(S.contacts, S.current)) {
+      const row = document.createElement('label'), box = document.createElement('input'), name = document.createElement('span'), st = document.createElement('span');
+      row.className = 'check'; box.type = 'checkbox'; box.dataset.pub = r.pub; if (r.free) box.dataset.free = '1'; box.checked = r.ticked; box.onchange = syncPicker;
+      name.textContent = r.name; st.className = 'muted small'; st.textContent = r.state;
+      row.append(box, name, st); root.appendChild(row);
+    }
+    $('castHint').textContent = K.capturable() ? 'This window is not hidden from screen capture here: viewers also see this list and your chats.' : '';
+    syncPicker(); K.prompt('mCast');
   }
   const sessionPub = () => { const sess = pick(); return sess ? sess.pub : null; };
+  // what the contact list marks: '' no session, 'out' my screen goes to them, 'both' theirs comes back as well, 'in' anything else
+  const live = (pub) => { const x = map.get(pub); return !x ? '' : !x.screenTrack ? 'in' : x.remote.screen ? 'both' : 'out'; };
   K.paint = render;
   K.paintStats = (sess) => { if (K.viewer.bound === sess) $('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
 
   $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if (sess && sess.screenTrack) K.cast.remove(S.current); else K.cast.add(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
-  $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
-  $('shareMenu').querySelectorAll('button').forEach((b) => (b.onclick = async () => { $('shareMenu').classList.add('hidden'); S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.mode); render(); toast(b.dataset.mode === 'two' ? 'Two way: your contact will be asked to share their screen too' : 'One way: only your screen is sent', 'ok'); }));
+  $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
+  $('shareMenu').querySelectorAll('button[data-mode]').forEach((b) => (b.onclick = async () => { $('shareMenu').classList.add('hidden'); S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.mode); render(); toast(b.dataset.mode === 'two' ? 'Two way: your contact will be asked to share their screen too' : 'One way: only your screen is sent', 'ok'); }));
+  $('shareCastOpen').onclick = () => { $('shareMenu').classList.add('hidden'); openPicker(); };
+  $('castBarManage').onclick = openPicker;
+  $('castGo').onclick = () => { const pubs = [...$('castList').querySelectorAll('input')].filter((b) => b.checked).map((b) => b.dataset.pub); K.unprompt('mCast'); K.cast.set(pubs); };
+  $('castStop').onclick = () => { K.unprompt('mCast'); K.cast.stop('user'); };
+  $('castBarStop').onclick = () => K.cast.stop('user');
   document.addEventListener('click', () => $('shareMenu').classList.add('hidden'));
   $('btnMic').onclick = () => { const sess = cur(); if (sess) K.cast.talk(sess); };
   $('viewerTalk').onclick = () => { const sess = cur(); if (sess) K.cast.talk(sess); };
@@ -79,21 +116,22 @@
   $('shareBackNo').onclick = () => K.unprompt('mShareBack');
   // remote control: the viewer's input on the video goes to their machine while it is on
   $('viewerCtl').onclick = () => { const sess = K.viewer.bound; if (sess) K.control.ask(sess); };
-  $('btnStopCtl').onclick = () => { const own = K.control.owner; if (own) K.control.endGive(own.sess, 'stopped'); };
+  $('btnStopCtl').onclick = $('castBarStopCtl').onclick = () => { const own = K.control.owner; if (own) K.control.endGive(own.sess, 'stopped'); };
   // the dialog belongs to the session that asked (K.control.pending), whichever chat is open
   $('controlYes').onclick = () => K.control.allow();
   $('controlNo').onclick = () => K.control.deny('denied');
 
   // debug surface for the UI test (test/ui/share.sh): session internals and audio RTP counters
-  const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, in: { video: !!x.remote.video, audio: !!x.remote.audio }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
-    enc: x.screenSender ? x.screenSender.getParameters().encodings[0] || null : null,
+  const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, in: { video: !!x.remote.video, audio: !!x.remote.audio, cast: x.remote.cast, frames: x.q ? x.q.decN || 0 : 0 }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
+    enc: x.screenSender ? x.screenSender.getParameters().encodings[0] || null : null, limit: x.q && x.q.limit ? x.q.limit : null,
     ctl: { give: x.ctl.give, take: x.ctl.take, asked: x.ctl.asked, sent: x.ctl.sent, recv: x.ctl.recv, chans: x.ctl.chans.map((c) => `${c.label}:${c.readyState}`) } } : null; };
   const debugAll = () => ({ sessions: Object.fromEntries([...map.values()].map((x) => [x.pub.slice(0, 8), debug(x.pub)])),
     capture: { state: K.capture.state, leases: K.capture.leases.size }, mic: { state: K.mic.state, leases: K.mic.leases.size, audienceOn: K.mic.audienceOn },
     cast: { members: Object.fromEntries([...K.cast.members].map(([pub, m]) => [pub.slice(0, 8), m.state])) },
-    control: { owner: K.control.owner ? K.control.owner.sess.pub.slice(0, 8) : null, pending: K.control.pending ? K.control.pending.sess.pub.slice(0, 8) : null, taking: K.control.taking ? K.control.taking.pub.slice(0, 8) : null } });
-  async function audio() {
-    const sess = pick();
+    control: { owner: K.control.owner ? K.control.owner.sess.pub.slice(0, 8) : null, pending: K.control.pending ? K.control.pending.sess.pub.slice(0, 8) : null, taking: K.control.taking ? K.control.taking.pub.slice(0, 8) : null },
+    bound: K.viewer.bound ? K.viewer.bound.pub.slice(0, 8) : null, theater: K.viewer.theater });
+  async function audio(pub) {
+    const sess = pick(pub);
     if (!sess || !sess.pc) return null;
     const out = { in: null, out: null };
     (await sess.pc.getStats()).forEach((r) => {
@@ -102,6 +140,6 @@
     });
     return out;
   }
-  window.Share = { onFrame: (ev) => K.sessions.onFrame(ev), onStatus: (ev) => K.sessions.onStatus(ev), onSettings, onFullscreen: (ev) => K.viewer.onFullscreen(ev), onControl: (ev) => K.control.onHelper(ev), onCursor: (c) => K.control.onCursor(c), render, end: () => { const sess = cur(); if (sess) K.sessions.end(sess); }, setFull: (on) => K.viewer.setFull(on), sessionPub, active: () => map.size > 0, lastRecording: () => K.rec.last, debug, debugAll, audio,
+  window.Share = { onFrame: (ev) => K.sessions.onFrame(ev), onStatus: (ev) => K.sessions.onStatus(ev), onSettings, onFullscreen: (ev) => K.viewer.onFullscreen(ev), onControl: (ev) => K.control.onHelper(ev), onCursor: (c) => K.control.onCursor(c), render, end: () => { const sess = cur(); if (sess) K.sessions.end(sess); }, setFull: (on) => K.viewer.setFull(on), sessionPub, live, active: () => map.size > 0, lastRecording: () => K.rec.last, debug, debugAll, audio,
     inject: (m) => (K.control.isTaking() ? K.sessions.dc(K.viewer.bound, m && m.t === 'm' ? 'move' : 'ctl', m) : false) };   // test hook: send one control message as the viewer's input would
 })();

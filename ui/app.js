@@ -88,8 +88,8 @@ function renderContacts() {
     const prev = c.last ? (c.last.kind === 'code' ? c.last.text.split('\n')[0] : c.last.kind === 'image' ? 'Screenshot' : c.last.text) : (c.status === 'online' ? 'Online' : 'No messages yet');
     main.innerHTML = `<div class="c-name">${esc(c.name)}${c.verified ? ' <span class="verified">✓</span>' : ''}</div><div class="c-prev${c.last?.kind === 'code' ? ' code' : c.last?.kind === 'image' ? ' image' : ''}">${c.last?.from === 'me' ? '<span class="muted">You: </span>' : ''}${esc(prev)}</div>`;
     const side = document.createElement('div'); side.className = 'c-side';
-    const live = window.Share && window.Share.sessionPub() === c.pub;
-    side.innerHTML = `<span class="c-time">${c.last ? fmtListTime(c.last.ts) : ''}</span>${live ? '<span class="live" title="Screen share in progress">● live</span>' : ''}${c.unread && c.pub !== S.current ? `<span class="badge">${c.unread}</span>` : ''}`;
+    const live = window.Share ? window.Share.live(c.pub) : '';
+    side.innerHTML = `<span class="c-time">${c.last ? fmtListTime(c.last.ts) : ''}</span>${live === 'out' || live === 'both' ? '<span class="live" title="You are sharing your screen with them">● sharing</span>' : live ? '<span class="live" title="Screen share in progress">● live</span>' : ''}${c.unread && c.pub !== S.current ? `<span class="badge">${c.unread}</span>` : ''}`;
     row.append(av, main, side);
     row.onclick = () => select(c.pub);
     root.appendChild(row);
@@ -444,7 +444,7 @@ window.api.onEvent(async (ev) => {
         row.innerHTML = `<span>${esc(ev.name)}</span><span class="muted small">${esc(ev.host)}</span><span class="spacer"></span>`;
         const b = document.createElement('button'); b.className = 'primary'; b.textContent = 'Add'; b.onclick = () => { $('addInvite').value = ev.invite; $('addGo').click(); }; row.appendChild(b); $('peers').appendChild(row); }
       break;
-    case 'protection': S.capture = { supported: ev.supported, how: ev.how }; renderShield(ev.on); break;
+    case 'protection': S.capture = { supported: ev.supported, how: ev.how }; renderShield(ev.on); if (window.Share) window.Share.render(); break;   // a window that shows in captures names nobody in the audience bar
     case 'relay': renderRelay(ev.status); if (ev.status === 'up') refreshState(); break;
     case 'opacity': renderOpacity(ev.opacity); break;
     case 'fullHotkey': if (window.Share && window.Share.active()) window.Share.setFull(); break;

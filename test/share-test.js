@@ -1,6 +1,7 @@
 // The share code of the renderer (ui/share/*.js) without a window: the parts that are plain logic.
 // Each of those files is one closure that hangs its part on window.ShareKit and reads the app's
 // globals only when called, so it loads into a bare context that has just what a test hands in.
+// At the end, main's memory of which share already raised its pop-up (main/sharepop.js).
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const ok = (n, v) => { console.log((v ? 'PASS' : 'FAIL').padEnd(5), n); if (!v) process.exitCode = 1; };
 function load(files, globals = {}) {
@@ -9,6 +10,7 @@ function load(files, globals = {}) {
   for (const f of files) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'ui', 'share', f), 'utf8'), ctx, { filename: f });
   return ctx.ShareKit;
 }
+const js = (v) => JSON.stringify(v);   // values made inside the context are compared as text
 
 // C1: a pointer picture has to fit one data-channel message
 {
@@ -33,4 +35,105 @@ function load(files, globals = {}) {
   ok('C1 the size the connection gives is the one that counts', sent.length === 4);
   K.control.onCursor({ ...pic(400), token: 'other' }); sess.ctl.give = 'off'; K.control.onCursor(pic(400));
   ok('C1 and a picture still goes out only with the token of the grant, while control is on', sent.length === 4);
+}
+
+// T1: what each viewer's encoder gets, by the size of the audience
+{
+  const K = load(['kit.js', 'tune.js'], { console: { error() {} } }), t = K.tune;   // quiet: one case below makes the sender refuse
+  ok('T1 the caps: six sessions, four contacts get my screen', K.MAX_SESSIONS === 6 && t.MAX_AUDIENCE === 4);
+  ok('T1 one viewer and two get the one-to-one values', js(t.tier(1, false)) === '{"kbps":8000,"fps":30,"maxW":2560}' && js(t.tier(2, false)) === js(t.tier(1, false)));
+  ok('T1 and their encoder object is the one a single share always had', js(t.encoding(t.tier(1, false))) === '{"maxBitrate":8000000,"maxFramerate":30}' && js(t.encoding(t.tier(2, false))) === '{"maxBitrate":8000000,"maxFramerate":30}');
+  ok('T1 three viewers: 5 Mb/s, 20 fps, 1920 wide', js(t.tier(3, false)) === '{"kbps":5000,"fps":20,"maxW":1920}');
+  ok('T1 four and more: 4 Mb/s, 15 fps, 1920 wide', js(t.tier(4, false)) === '{"kbps":4000,"fps":15,"maxW":1920}' && js(t.tier(6, false)) === js(t.tier(4, false)));
+  ok('T1 the viewer who controls keeps 30 fps and at least 5 Mb/s', js(t.tier(4, true)) === '{"kbps":5000,"fps":30,"maxW":1920}' && js(t.tier(3, true)) === '{"kbps":5000,"fps":30,"maxW":1920}' && js(t.tier(1, true)) === js(t.tier(1, false)));
+  // a session as tune.sender sees it: the clone's width, and a sender that records what it is given
+  const fake = (width) => { const set = []; return { set, width, closed: false, scaled: false, screenTrack: { getSettings() { return { width: this.w() }; }, w: null }, screenSender: { getParameters: () => ({ transactionId: 'tx', encodings: [{ active: true, maxBitrate: 1 }] }), setParameters: async (p) => { set.push(js(p)); } } }; };
+  const run = async (x, tier) => { x.screenTrack.w = () => x.width; await t.sender(x, tier); return x.set[x.set.length - 1]; };
+  (async () => {
+    const a = fake(1920);
+    ok('T1 sender: a one-viewer share gets exactly the two values, in the parameters it read', await run(a, t.tier(1, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30}]}' && a.scaled === false);
+    ok('T1 sender: a clone as wide as the tier allows is not scaled', await run(a, t.tier(4, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":4000000,"maxFramerate":15}]}' && a.scaled === false);
+    const b = fake(2560);
+    ok('T1 sender: a wider one is scaled down to the tier, by its own width', await run(b, t.tier(3, false)) === `{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":20,"scaleResolutionDownBy":${2560 / 1920}}]}` && b.scaled === true);
+    ok('T1 sender: back at two viewers the scaling is taken off again (the key stays, at 1)', await run(b, t.tier(2, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30,"scaleResolutionDownBy":1}]}');
+    b.width = 3840;
+    ok('T1 sender: the width is read again on every call', await run(b, t.tier(3, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":20,"scaleResolutionDownBy":2}]}');
+    const c = fake(1920); let refused = 0; c.screenSender.setParameters = async () => { refused++; throw new Error('refused'); };
+    let threw = false; try { await run(c, t.tier(1, false)); } catch { threw = true; }
+    const d = fake(1920); d.screenSender = null; await run(d, t.tier(1, false));
+    ok('T1 sender: a set that keeps being refused is given up after three tries and not thrown on; a session without a screen sender is left alone', threw === false && refused === 3 && d.set.length === 0);
+    const e = fake(1920), take = e.screenSender.setParameters; let asked = 0;
+    e.screenSender.setParameters = async (p) => { if (++asked === 1) throw new Error('modified RTCP parameters'); return take(p); };   // a negotiation changed them underneath, once
+    ok('T1 sender: a set refused once is read and set again', await run(e, t.tier(3, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":20}]}' && asked === 2 && e.set.length === 1);
+    const f = fake(1920), waiting = []; f.screenTrack.w = () => 1920;
+    f.screenSender.setParameters = (p) => new Promise((res, rej) => waiting.push({ p: js(p), res, rej }));
+    const older = t.sender(f, t.tier(4, false)), newer = t.sender(f, t.tier(2, false));
+    waiting[0].rej(new Error('refused')); waiting[1].res(); await older; await newer;
+    ok('T1 sender: a refused set is not tried again once a later call has taken over', waiting.length === 2 && waiting[1].p === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30}]}');
+  })().catch((e) => { console.log('FAIL  T1 sender threw:', e.stack); process.exitCode = 1; });
+}
+
+// A1: the audience, counted, in words and as the picker lists it
+{
+  const names = { a: 'Ann', b: 'Bob', c: 'Cy', d: 'Dee', e: 'Eve' }, sessions = {};
+  let paints = 0;
+  const K = load(['kit.js', 'tune.js', 'cast.js'], { contact: (pub) => (names[pub] ? { pub, name: names[pub] } : undefined) });
+  K.sessions = { get: (pub) => sessions[pub] || null, all: () => Object.values(sessions) }; K.control = { owner: null }; K.paint = () => { paints++; };
+  const cast = K.cast, m = cast.members, put = (pub, state) => m.set(pub, { state, mode: 'one', timer: null });
+  ok('A1 nobody: count 0', cast.count() === 0 && cast.text(false) === 'Sharing your screen');
+  put('b', 'live');
+  ok('A1 one viewer', cast.count() === 1 && cast.text(false) === 'Sharing your screen with Bob');
+  put('a', 'joining');
+  ok('A1 two, by name, joining counts', cast.count() === 2 && cast.text(false) === 'Sharing your screen with Ann and Bob');
+  put('c', 'live');
+  ok('A1 three', cast.count() === 3 && cast.text(false) === 'Sharing your screen with Ann, Bob and Cy');
+  m.get('c').state = 'away';
+  ok('A1 one who is away is not counted and is named apart', cast.count() === 2 && cast.text(false) === 'Sharing your screen with Ann and Bob (Cy reconnecting)');
+  sessions.b = { pub: 'b', screenTrack: {}, remote: { rec: false }, ctl: { give: 'on' } }; K.control.owner = { sess: sessions.b, token: 't' };
+  ok('A1 who controls', cast.text(false) === 'Sharing your screen with Ann and Bob (Cy reconnecting) · Bob controls it');
+  sessions.a = { pub: 'a', screenTrack: {}, remote: { rec: true }, ctl: { give: 'off' } };
+  ok('A1 who records', cast.text(false) === 'Sharing your screen with Ann and Bob (Cy reconnecting) · Bob controls it · Ann records');
+  sessions.b.remote.rec = true;
+  ok('A1 two who record', cast.text(false).endsWith(' · Ann and Bob record'));
+  const anon = cast.text(true);
+  ok('A1 where this window is in the picture the line names nobody', anon === 'Sharing your screen with 2 contacts (1 reconnecting) · controlled · recorded' && !/Ann|Bob|Cy/.test(anon));
+  sessions.b.ctl.give = 'asked'; sessions.b.remote.rec = false; sessions.a.remote.rec = false;
+  ok('A1 a request that is only asked is not control', cast.text(false) === 'Sharing your screen with Ann and Bob (Cy reconnecting)');
+  m.delete('a'); m.delete('c');
+  ok('A1 one contact, anonymous', cast.text(true) === 'Sharing your screen with 1 contact');
+  // the picker
+  const contacts = [{ pub: 'e', name: 'Eve', status: 'offline' }, { pub: 'b', name: 'Bob', status: 'online' }, { pub: 'a', name: 'Ann', status: 'online' }, { pub: 'c', name: 'Cy', status: 'connecting' }, { pub: 'd', name: 'Dee', status: 'online' }];
+  m.clear();
+  let r = cast.rows(contacts, 'a');
+  ok('A1 picker: rows by name', r.map((x) => x.name).join() === 'Ann,Bob,Cy,Dee,Eve');
+  ok('A1 picker: with no audience the open chat is ticked, nothing else', r.map((x) => +x.ticked).join('') === '10000');
+  ok('A1 picker: a contact who is not online is marked and cannot be ticked', r.map((x) => x.state).join() === ',,offline,,offline' && r.map((x) => +x.free).join('') === '11010');
+  ok('A1 picker: an open chat whose contact is offline is not ticked', cast.rows(contacts, 'e').every((x) => !x.ticked));
+  put('b', 'live'); put('d', 'joining'); put('e', 'away');
+  r = cast.rows(contacts, 'a');
+  ok('A1 picker: with an audience it is the audience that is ticked, not the open chat', r.map((x) => +x.ticked).join('') === '01011');
+  ok('A1 picker: watching, joining, reconnecting', r.map((x) => x.state).join() === ',watching,offline,joining…,reconnecting…');
+  ok('A1 picker: one of the audience who is offline can stay ticked or be ticked again', r[4].free === true && cast.locked(r[4].free, false, 2) === false);
+  ok('A1 picker: at four ticked every box without a tick is locked, the ticked ones are not', cast.locked(true, false, 4) && !cast.locked(true, true, 4) && !cast.locked(true, false, 3) && cast.locked(false, false, 0));
+  K.tune.MAX_AUDIENCE = 1;
+  ok('A1 picker: the limit is read when asked', cast.locked(true, false, 1) && !cast.locked(true, false, 0));
+  K.tune.MAX_AUDIENCE = 4;
+  // what a sharer says about its audience
+  const told = { remote: { cast: 0 } };
+  cast.onTold(told, { t: 'cast', n: 3 }); const three = told.remote.cast;
+  cast.onTold(told, { t: 'cast', n: 16 }); const top = told.remote.cast;
+  const bad = [17, -1, 2.5, '3', null, undefined, {}].map((n) => { cast.onTold(told, { t: 'cast', n }); return told.remote.cast; });
+  ok('A1 a viewer keeps the count it is told only when it is a whole number from 0 to 16', three === 3 && top === 16 && bad.every((n) => n === 0) && paints === 9);
+}
+
+// P1: one pop-up per incoming share, per contact
+{
+  const { createSharePops } = require('../main/sharepop.js');
+  const p = createSharePops(), st = (pub, sid, screen = true) => ({ op: 'state', pub, sid, screen });
+  ok('P1 the first state frame with a screen pops up, the next ones of that share do not', p.wants(st('a', '1')) && !p.wants(st('a', '1')) && !p.wants(st('a', '1')));
+  ok('P1 a second contact sharing meanwhile pops up once and does not bring the first back', p.wants(st('b', '2')) && !p.wants(st('a', '1')) && !p.wants(st('b', '2')) && !p.wants(st('a', '1')));
+  ok('P1 a state frame without a screen, an offer and a candidate pop nothing', !p.wants(st('c', '3', false)) && !p.wants({ op: 'sdp', pub: 'c', sid: '3' }) && !p.wants({ op: 'ice', pub: 'c', sid: '3' }) && p.size() === 2);
+  ok('P1 a share that gets its screen later pops then', p.wants(st('c', '3')) && !p.wants(st('c', '3')));
+  ok('P1 the next share of a contact (a new sid) pops up again', p.wants(st('a', '4')) && !p.wants(st('a', '4')));
+  ok('P1 a bye forgets the contact', !p.wants({ op: 'bye', pub: 'a', sid: '4' }) && p.size() === 2 && p.wants(st('a', '4')));
 }

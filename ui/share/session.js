@@ -25,13 +25,17 @@
   // `v`) answers by contact, not by sid: if its side outlived a close it was not told about, it goes
   // on under the old sid, also toward a session opened next. Its frames are dropped only after a
   // close that a bye went with, either way: then its side is gone as well.
+  // The same goes for a share that was refused at the session limit: its opener was answered with bye and
+  // never had a session here, and what follows it (the `state` frame its sender had already sent) must not
+  // open one when a slot has come free meanwhile.
   const gone = new Map();   // pub -> Map(sid -> { until, bye })
-  function remember(sess, why) {
-    const now = Date.now(), kept = gone.get(sess.pub) || new Map(), bye = ['ended', 'timeout', 'bye', 'refused'].includes(why);
+  function keep(pub, sids, bye) {
+    const now = Date.now(), kept = gone.get(pub) || new Map();
     for (const [sid, g] of kept) if (g.until <= now) kept.delete(sid);
-    for (const sid of [sess.id, ...sess.peerSids]) kept.set(sid, { until: now + K.CONNECT_MS, bye });
-    gone.set(sess.pub, kept);
+    for (const sid of sids) kept.set(sid, { until: now + K.CONNECT_MS, bye });
+    gone.set(pub, kept);
   }
+  const remember = (sess, why) => keep(sess.pub, [sess.id, ...sess.peerSids], ['ended', 'timeout', 'bye', 'refused'].includes(why));
   function leftover(ev) {
     const kept = gone.get(ev.pub), g = kept && kept.get(ev.sid);
     if (!g) return false;
@@ -49,8 +53,8 @@
     let markSeen;
     const sess = { pub, id: sid || newSid(), pc: null, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
       local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null,
-      remote: { video: null, audio: null, view: null, audioEl: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
-      closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null,
+      remote: { video: null, audio: null, view: null, audioEl: null, screen: false, mic: false, mode: 'one', rec: false, cast: 0 }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
+      closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null, scaled: false,
       ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null, token: null, deniedAt: 0 } };
     map.set(pub, sess);
     // the ICE config is read per session, so a Settings change applies to the next share
@@ -189,7 +193,7 @@
     if (!sess) {
       if (!opens) return;               // stale ice/state after a bye
       sess = open(ev.pub, ev.sid, true);
-      if (!sess) { window.api.share(ev.pub, { sid: ev.sid, op: 'bye', v: K.PROTO }).catch(() => {}); return; }   // at the limit: busy with someone else
+      if (!sess) { keep(ev.pub, [ev.sid], true); window.api.share(ev.pub, { sid: ev.sid, op: 'bye', v: K.PROTO }).catch(() => {}); return; }   // at the limit: one bye, and the rest of that share is dropped
     }
     sess.peerSids.add(ev.sid);
     if (!sess.seen) { sess.seen = true; sess.ver = Number.isInteger(ev.v) ? ev.v : 0; sess.markSeen(); }
@@ -222,30 +226,36 @@
     sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
     if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
     if (ev.screen && !was && S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`);
-    if (!ev.screen) K.control.stopTaking(sess);             // no screen left to drive, or to ask for
+    if (!ev.screen) { sess.remote.cast = 0; K.control.stopTaking(sess); }   // no screen left to drive, or to ask for
     if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; K.viewer.askBack(sess); }
     if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
     K.rec.sync(sess); K.paint(); renderContacts();
   }
-  function onStatus(ev) { const sess = map.get(ev.pub); if (sess && ev.status !== 'online') close(sess, 'offline'); }
+  function onStatus(ev) {
+    const sess = map.get(ev.pub);
+    if (ev.status === 'online') K.cast.peerOnline(ev.pub);    // back: if it dropped out of my audience a moment ago it gets my screen again
+    else if (sess) close(sess, 'offline');
+  }
 
   // --- data channels ----------------------------------------------------------------
   // A channel carries only the message types of its label, and a channel with any other label is left
   // alone: no handler, no slot. (A released peer reads every channel as control whatever its label, so
   // no type it knows is ever sent under a new label.)
-  const TYPES = new Map([['ctl', new Set(['req', 'ctl', 'rel', 'cur', 'm', 'b', 'w', 'k', 'r'])], ['move', new Set(['m'])]]);
+  const TYPES = new Map([['ctl', new Set(['req', 'ctl', 'rel', 'cur', 'm', 'b', 'w', 'k', 'r', 'cast'])], ['move', new Set(['m'])]]);
   function onMessage(sess, types, data) {
     if (typeof data !== 'string' || data.length > K.DC_MAX) return;
     let m; try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
     sess.ctl.recv++;
-    if (types.has(m.t)) K.control.onMessage(sess, m);
+    if (!types.has(m.t)) return;
+    if (m.t === 'cast') K.cast.onTold(sess, m); else K.control.onMessage(sess, m);
   }
   function adoptChannel(sess, ch) {
     const types = TYPES.get(ch.label);
     if (!types) return;
     ch.onmessage = (e) => onMessage(sess, types, e.data);
     ch.onerror = (e) => console.warn('channel', ch.label, e.error ? e.error.message : e);
+    if (ch.label === 'ctl') ch.addEventListener('open', () => K.cast.tell(sess));   // a viewer hears how many watch as soon as it can be told
     if (ch.label === 'ctl' && !sess.ctl.dc) sess.ctl.dc = ch;
     if (ch.label === 'move' && !sess.ctl.mv) sess.ctl.mv = ch;
     sess.ctl.chans.push(ch);

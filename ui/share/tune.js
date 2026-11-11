@@ -15,7 +15,7 @@
   const ASK_MS = 45000;               // a control request with no answer expires
   const GIVE_ASK_MS = ASK_MS - 5000;  // the sharer's dialog gives up first, so the viewer gets one answer and not its own timeout on top
   const SPLIT_MIC = false;            // the microphone on a MediaStream of its own: released peers (0.7.1) read both tracks from one, so off
-  const MAX_AUDIENCE = 1;             // contacts that get my screen at once, from the one capture
+  const MAX_AUDIENCE = 4;             // contacts that get my screen at once, from the one capture; read as K.tune.MAX_AUDIENCE where it is used
   const MOVE_EV = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';   // raw: not held to the next frame
 
   // The viewer plays what arrives as soon as it arrives: no jitter-buffer cushion for a share
@@ -40,6 +40,34 @@
     if (wait <= 0) { clearTimeout(c.flush); c.flush = null; c.move = null; c.moveAt = now; K.sessions.dc(sess, 'move', m); return; }
     c.move = m;
     if (!c.flush) c.flush = setTimeout(() => { c.flush = null; const p = c.move; if (p) { c.move = null; c.moveAt = performance.now(); K.sessions.dc(sess, 'move', p); } }, wait);
+  }
+
+  // One capture, several viewers: every viewer is an encoder of its own, so from the third on each gets
+  // less. Up to two get the one-to-one values. The viewer who drives the screen keeps the full frame
+  // rate, whatever the audience: the pointer has to feel live there.
+  function tier(n, controlled) {
+    const t = n <= 2 ? { kbps: VIDEO_KBPS, fps: FPS, maxW: MAX_W } : n === 3 ? { kbps: 5000, fps: 20, maxW: 1920 } : { kbps: 4000, fps: 15, maxW: 1920 };
+    if (controlled) { t.fps = FPS; t.kbps = Math.max(t.kbps, 5000); }
+    return t;
+  }
+  const encoding = (t) => ({ maxBitrate: t.kbps * 1000, maxFramerate: t.fps });
+  // Sets a tier on one session's screen sender: encoder parameters only, never a renegotiation. The
+  // down-scaling comes from the width of the session's own clone, read on every call (a clone need not
+  // have the size the capture was held to). A session that was scaled once keeps the key, at 1 when it
+  // is no longer needed, so a tier that goes back up takes the scaling off again.
+  // The parameters are read and set in one go, but the browser applies them a moment later: an offer or
+  // answer that lands in between changes them underneath (their RTCP part) and the set is refused. They
+  // are then read and set again, unless a later call has taken over or the share ended meanwhile.
+  async function sender(sess, t) {
+    const snd = sess.screenSender;
+    if (!snd || !sess.screenTrack) return;
+    const w = sess.screenTrack.getSettings().width || 0, scale = w > t.maxW ? w / t.maxW : 1, enc = encoding(t);
+    if (scale > 1 || sess.scaled) { enc.scaleResolutionDownBy = scale; sess.scaled = true; }
+    const turn = sess.capTurn = (sess.capTurn || 0) + 1;
+    for (let tries = 3; tries > 0; tries--) {
+      try { const p = snd.getParameters(); p.encodings = [enc]; await snd.setParameters(p); return; }
+      catch (e) { if (sess.closed || sess.screenSender !== snd || sess.capTurn !== turn) return; if (tries === 1) console.error('share caps', e.message); }
+    }
   }
 
   // Where the delay sits: per-window averages from the same 2 s report (viewer: buffer, decode, shown; sharer: encoder input and output).
@@ -74,7 +102,7 @@
     hint: (controlled) => (controlled ? 'motion' : 'detail'),   // smooth over sharp while they drive
     codecs: preferCodecs,
     receiver: (receiver, kind) => { if (kind === 'video') lowLatency(receiver); },
-    sender: async (sess) => { try { const p = sess.screenSender.getParameters(); p.encodings = [{ maxBitrate: VIDEO_KBPS * 1000, maxFramerate: FPS }]; await sess.screenSender.setParameters(p); } catch (e) { console.error('share caps', e.message); } },
+    tier, encoding, sender,
     streamFor: (sess, kind) => (kind === 'audio' && SPLIT_MIC && sess.ver >= 2 ? (sess.micLocal ||= new MediaStream()) : sess.local),
     sendMove, readout,
   };

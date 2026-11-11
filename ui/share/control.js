@@ -9,7 +9,7 @@
 // request whose dialog is open; `taking` the one session whose screen I drive.
 // Control ends in two functions and nowhere else: endGive (my screen) and stopTaking (theirs).
 //
-// Reads from app.js: toast, ipcErr. Reads K.sessions, K.tune, K.viewer, K.unprompt and K.paint at call time.
+// Reads from app.js: toast, ipcErr. Reads K.sessions, K.tune, K.cast.retier, K.viewer, K.unprompt and K.paint at call time.
 (() => {
   const K = window.ShareKit;
   const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, timer }
@@ -98,6 +98,7 @@
       try { sess.screenTrack.contentHint = K.tune.hint(true); } catch {}
       dc(sess, { t: 'ctl', on: true });
       toast(`${name} now uses your mouse and keyboard. ✋ Stop control next to the Sharing pill ends it.`);
+      K.cast.retier();   // whoever drives gets the full frame rate, whatever the audience
     } else {
       C.owner = null; ctl.give = 'off';
       dc(sess, { t: 'ctl', on: false, why: (r && r.reason) || 'helper' });
@@ -124,7 +125,7 @@
     if (token) window.api.controlRevoke(token).catch(() => {});   // no token yet: allow() hands the grant back when it arrives
     if (was === 'on') { try { if (sess.screenTrack) sess.screenTrack.contentHint = K.tune.hint(false); } catch {} }
     if (!sess.closed && why !== 'released') dc(sess, { t: 'ctl', on: false, why: why === 'denied' ? undefined : why === 'expired' ? 'expired' : why === 'stopped' ? 'stopped' : 'helper' });
-    if (was === 'on') toast(why === 'released' ? `${K.nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' || why === 'closed' ? 'Remote control stopped' : `Remote control stopped: ${why}`);
+    if (was === 'on') { toast(why === 'released' ? `${K.nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' || why === 'closed' ? 'Remote control stopped' : `Remote control stopped: ${why}`); K.cast.retier(); }
     K.paint();
   }
   // main: the input helper stopped by itself

@@ -10,6 +10,7 @@ const { Engine } = require('../core/engine.js');
 const { trayIcon } = require('./icon.js');
 const { createController } = require('./input.js');
 const { createGrant } = require('./grant.js');
+const { createSharePops } = require('./sharepop.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -629,8 +630,8 @@ async function boot() {
 
   engine = new Engine(store, new Transport());
   for (const ev of ['contact', 'status', 'update', 'history', 'typing', 'error', 'info', 'discovered', 'relay', 'share']) engine.on(ev, (d) => push(ev, d));
-  let popupShareSid = '';
-  engine.on('share', (f) => { if (f.op === 'state' && f.screen && f.sid !== popupShareSid) { popupShareSid = f.sid; showPopup({ pub: f.pub, name: store.contact(f.pub)?.name || 'A contact', text: '', kind: 'share' }); } });
+  const sharePops = createSharePops();
+  engine.on('share', (f) => { if (sharePops.wants(f)) showPopup({ pub: f.pub, name: store.contact(f.pub)?.name || 'A contact', text: '', kind: 'share' }); });
   engine.on('message', ({ pub, msg }) => push('message', { pub, msg: msgView(pub, msg) }));
   // After sleep the relay link and peer sockets are usually dead without saying so.
   powerMonitor.on('resume', () => engine.kick());

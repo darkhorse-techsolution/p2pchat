@@ -35,6 +35,7 @@
   </aside>
 
   <main class="main">
+    <div class="cast-bar hidden" id="castBar"><span id="castBarText"></span><span class="spacer"></span><button class="stop-ctl hidden" id="castBarStopCtl">✋ Stop control</button><button id="castBarManage">Audience…</button><button class="danger" id="castBarStop">Stop sharing</button></div>
     <div class="empty" id="empty">
       <button class="icon-btn nav-btn empty-nav" id="btnNav2" title="Show contact list (⌘B)">☰</button>
       <div class="empty-art"></div>
@@ -60,6 +61,7 @@
             <div class="menu hidden" id="shareMenu">
               <button data-mode="one"><b>One way</b><span>Only your screen and voice are sent</span></button>
               <button data-mode="two"><b>Two way</b><span>They are asked to share their screen too</span></button>
+              <button id="shareCastOpen"><b>Several contacts…</b><span>Pick who gets your screen (up to 4)</span></button>
             </div>
           </div>
           <button class="icon-btn hidden" id="btnMic" title="Microphone">🎙</button>
@@ -70,7 +72,7 @@
       <section class="viewer hidden" id="viewer">
         <video id="viewerVideo" autoplay playsinline tabindex="0"></video>
         <div class="viewer-bar">
-          <span class="viewer-name" id="viewerName"></span><span class="viewer-stats" id="viewerStats"></span>
+          <span class="viewer-name" id="viewerName"></span><span class="viewer-stats" id="viewerStats"></span><span class="viewer-aud" id="viewerAud"></span>
           <span class="spacer"></span>
           <button id="viewerMute" title="Mute their sound">🔊</button>
           <button id="viewerTalk" title="Send your microphone so they hear you">🎙 Talk</button>
@@ -215,6 +217,13 @@
     <h3>Share your screen too?</h3>
     <p class="muted"><b id="shareBackName"></b> is sharing their screen and asks to see yours as well (two-way share). You keep watching theirs either way.</p>
     <div class="modal-actions"><button class="ghost" id="shareBackNo">Just watch</button><span class="spacer"></span><button class="primary" id="shareBackYes">Share my screen</button></div>
+  </div>
+  <div class="modal hidden" id="mCast">
+    <h3>Share your screen with</h3>
+    <p class="muted">One capture of this display goes to every contact you tick, up to 4. They see your screen and hear your microphone, not each other.</p>
+    <div class="cast-list" id="castList"></div>
+    <div class="muted small" id="castHint"></div>
+    <div class="modal-actions"><button class="danger ghost hidden" id="castStop">Stop for everyone</button><span class="muted small" id="castCount"></span><span class="spacer"></span><button class="ghost" data-close>Cancel</button><button class="primary" id="castGo">Start sharing</button></div>
   </div>
 
   <div class="lightbox hidden" id="lightbox">
