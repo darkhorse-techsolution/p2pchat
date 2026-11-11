@@ -712,6 +712,10 @@ async function boot() {
   // a reload: the page that held the share and the grant is gone, whatever it was doing
   win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); setKeysRemote(false); sharedDisplay = null; } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // A screen share offers only the interface the OS routes traffic through, not every one it has. A server
+  // with Docker had 36 bridge networks, all private and unreachable from outside: the peer tried each and the
+  // one real address was lost among them, so the share timed out. A home-LAN address is still offered.
+  win.webContents.setWebRTCIPHandlingPolicy('default_public_and_private_interfaces');
   // Everything is refused except what a screen share needs, and only for this window:
   // the display (served below without a picker) and the microphone (never the camera).
   const ours = (wc) => !!wc && win && !win.isDestroyed() && wc === win.webContents;
