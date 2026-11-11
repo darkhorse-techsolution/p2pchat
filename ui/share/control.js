@@ -198,8 +198,11 @@
     ctl.askTimer = setTimeout(() => { if (ctl.asked) { ctl.asked = false; ctl.askedClip = false; if (!sess.closed) { toast(`${K.nameOf(sess.pub)} has not answered`); K.paint(); } } }, K.tune.ASK_MS);
     K.paint();
   }
+  // One screen at a time: also when two requests of mine were out and both are answered. The one I drove
+  // until now is let go first, and with it the clipboard that was shared there.
   function startTaking(sess) {
-    const ctl = sess.ctl;
+    const ctl = sess.ctl, other = C.taking;
+    if (other && other !== sess) { stopTaking(other); dc(other, { t: 'rel' }); }
     ctl.take = true; C.taking = sess; ctl.move = null; ctl.moveAt = 0;
     clearTimeout(ctl.flush); ctl.flush = null;
     K.clip.sync(sess);

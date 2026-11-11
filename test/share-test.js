@@ -977,6 +977,24 @@ function pageWorld(extra = {}) {
   ok('V1 an offer that nothing withdrew is taken up as before', cy.ctl.take === true && cy.ctl.takeClip === true && x.K.clip.link && x.K.clip.link.sess === cy && x.K.clip.link.role === 'take' && x.starts.join() === 'take');
 }
 
+// V3: two requests of mine out, both answered: I still drive one screen, and the clipboard goes with that one only (review of stage D, MEDIUM 2)
+{
+  const w = pageWorld(), K = w.K, C = K.control, api = pages.get(K).api, sent = [], starts = [];
+  api.clipStart = (o) => { starts.push(`${o.role}:${o.pub}`); return new Promise(() => {}); }; api.clipStop = async () => true; api.clipPoke = async () => true;
+  const screen = (pub) => { const x = w.sess(pub, false, true); x.ctl.dc = { readyState: 'open', send: (text) => sent.push(`${pub}:${text}`) }; return x; };
+  const alice = screen('alice'), cy = screen('cy');
+  w.S.current = 'alice'; K.paint(); C.ask(alice);
+  w.S.current = 'cy'; K.paint(); C.ask(cy);
+  ok('V3 both requests are out, each with the clipboard offered', alice.ctl.asked && cy.ctl.asked && sent.join() === 'alice:{"t":"req","clip":1},cy:{"t":"req","clip":1}');
+  sent.length = 0; C.onMessage(alice, { t: 'ctl', on: true, clip: 1 });
+  ok('V3 the first yes: I drive that screen, with the clipboard', alice.ctl.take === true && C.taking === alice && K.clip.link && K.clip.link.sess === alice && starts.join() === 'take:alice');
+  sent.length = 0; C.onMessage(cy, { t: 'ctl', on: true, clip: 1 });
+  ok('V3 the second yes: I drive that one, and the first is let go', cy.ctl.take === true && alice.ctl.take === false && C.taking === cy);
+  ok('V3 the first screen is told: nothing stays pressed there, and its control is given back', sent.filter((x) => x.startsWith('alice:')).map((x) => x.slice(6)).filter((x) => x !== '{"t":"clipoff"}').join() === '{"t":"r"},{"t":"rel"}');
+  ok('V3 no clipboard link is left with a screen I do not drive', (K.clip.link === null || K.clip.link.sess === cy) && alice.ctl.takeClip === false);
+  ok('V3 and only the screen on screen takes my keys and pointer', C.isTaking() === true && K.viewer.bound === cy);
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
