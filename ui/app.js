@@ -75,7 +75,7 @@ function close() {
   if (under) { openModal = under; if (window.Share) window.Share.onShown(); return; }   // in view again: its Yes is disarmed anew
   $('backdrop').classList.add('hidden'); openModal = null; $('input').focus();
 }
-window.closeModal = close; // share.js has its own close(); it reaches the modal one through this name
+window.closeModal = close; // the share files are closures of their own: they close a modal through this name (share/kit.js: K.prompt, K.unprompt)
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = close));
 $('backdrop').onclick = close;
 

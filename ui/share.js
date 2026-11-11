@@ -7,24 +7,29 @@
 // straight between the peers, or through the TURN server from Settings when the
 // NATs will not let it through.
 //
-// One session at a time. Either side can add or drop its screen or its mic at
+// One session per contact, up to K.MAX_SESSIONS at once, each a connection of its own. My screen can
+// go to several contacts from the one capture (the audience); they get my screen and my microphone
+// and nothing of each other. Either side of a session can add or drop its screen or its mic at
 // any moment (one-way, two-way, talk-back) because the connection uses the
 // "perfect negotiation" pattern: the side with the lower public key is polite
 // and yields on an offer collision; the other keeps its offer.
 //
-// Remote control: the viewer can ask to drive the sharer's mouse and keyboard. The
-// sharer answers a dialog and can stop it at any moment. Events ride two data channels
+// Remote control: a viewer can ask to drive the sharer's mouse and keyboard. The sharer answers a
+// dialog and can stop it at any moment; one contact at a time has it. Events ride two data channels
 // on the same connection: "ctl" (reliable: requests, answers, buttons, keys, wheel) and
 // "move" (unordered, no retransmits: pointer moves, where only the latest matters). The
-// sharer's app hands them to the main process, which posts them to the OS (main/input.js).
-// Only a whole display is ever shared, so coordinates are fractions of that display.
+// sharer's app hands them to the main process with the token of the grant, and main posts them to
+// the OS (main/grant.js, main/input.js). Only a whole display is ever shared, so coordinates are
+// fractions of that display. While control is on, and only when both sides said so in that request,
+// copied text travels both ways on a third channel, "clip" (main/clip.js reads and writes the clipboard).
 //
-// This file is the last share script and holds what is left: the paint of the header and the viewer
-// bar, the buttons, the debug surface and window.Share. The sessions are in share/session.js, my
-// outgoing screen and microphone in share/cast.js, remote control in share/control.js, the clipboard
-// link that can come with it in share/clip.js, recording in
-// share/record.js, the video, full screen, the pointer and key listeners and the prompts in
-// share/viewer.js; share/kit.js has the namespace (K) and share/tune.js every latency and quality value.
+// This file is the last share script and holds what is left: the paint of the header, the viewer bar
+// and the audience bar, the audience picker, the buttons, the debug surface and window.Share. The
+// sessions are in share/session.js, my outgoing screen and microphone and the audience in
+// share/cast.js, remote control in share/control.js, the clipboard link that can come with it in
+// share/clip.js, recording in share/record.js, the video, full screen, the pointer and key listeners
+// and the prompts in share/viewer.js; share/kit.js has the namespace (K) and share/tune.js every
+// latency and quality value.
 //
 // Reads from app.js: S, $, toast, contact.
 (() => {
@@ -136,7 +141,7 @@
   // clipboard off, from either side: control stays, and the clipboard does not come back in this grant
   $('btnClip').onclick = $('viewerClip').onclick = () => { const link = K.clip.link; if (link) K.clip.off(link.sess, 'user'); };
 
-  // debug surface for the UI test (test/ui/share.sh): session internals and audio RTP counters
+  // debug surface for the UI tests (test/ui/share.sh, cast.sh, latency.sh): session internals and audio RTP counters
   const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, in: { video: !!x.remote.video, audio: !!x.remote.audio, cast: x.remote.cast, frames: x.q ? x.q.decN || 0 : 0 }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
     enc: x.screenSender ? x.screenSender.getParameters().encodings[0] || null : null, limit: x.q && x.q.limit ? x.q.limit : null, clip: !!(K.clip.link && K.clip.link.sess === x && K.clip.link.id),
     ctl: { give: x.ctl.give, take: x.ctl.take, asked: x.ctl.asked, sent: x.ctl.sent, recv: x.ctl.recv, chans: x.ctl.chans.map((c) => `${c.label}:${c.readyState}`) } } : null; };
