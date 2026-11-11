@@ -51,6 +51,7 @@
     catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); return { err: '' }; }
     await K.tune.capture(track);
     track.onended = () => stop('capture');              // the OS ended the capture
+    mic.audienceOn = true;                              // a new capture starts with the microphone on; after that only a mute or a click changes it
     return { track };
   }, () => {
     for (const pub of [...cast.members.keys()]) drop(pub);
@@ -134,9 +135,15 @@
         if (got && K.tune.SPLIT_MIC) { await sess.peerSeen; if (gone()) return false; }   // a stream of its own only for a peer known to sort tracks by kind
         if (got && !sess.micTrack) attachMic(sess);
       }
-      // The first of an audience sets the switch: on, or as this session's own microphone was (one I
-      // muted while watching them stays muted). Everyone after that gets the switch as it stands.
-      if (![...cast.members].some(([p, m]) => p !== pub && m.state === 'live')) mic.audienceOn = hadMic && sess.micTrack ? sess.micTrack.enabled : true;
+      // A mute the user set is lifted only by a click on a microphone button. So a contact whose microphone
+      // I had muted while watching them does not get it switched on by joining: the mute wins, for the whole
+      // audience (the microphone is one switch for everyone who gets my screen), and the user is told.
+      // Everyone else gets the switch as it stands. Whichever add() ends first, the outcome is the same.
+      if (hadMic && sess.micTrack && !sess.micTrack.enabled && mic.audienceOn) {
+        mic.audienceOn = false;
+        for (const x of K.sessions.all()) if (x !== sess && x.screenTrack && x.micTrack && x.micTrack.enabled) { x.micTrack.enabled = false; K.sessions.sendState(x); }
+        if (cast.members.size >= 2) toast('Microphone muted for everyone you share with');
+      }
       if (sess.micTrack) sess.micTrack.enabled = mic.audienceOn;
       me.state = 'live';
       K.sessions.sendState(sess);                             // after the microphone attempt: a peer that starts recording on this frame gets the sound too

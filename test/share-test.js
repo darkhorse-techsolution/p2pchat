@@ -689,6 +689,65 @@ const waitFor = async (cond, ms = 400) => { const t0 = Date.now(); while (!cond(
   ok('F2 the control dialog itself still takes the place of another prompt', K.prompt('mControl') === true && up('mControl') && !up('mShareBack'));
 }
 
+// The audience code (share/cast.js) with devices and sessions that only record: add, remove, talk and set run for real.
+function castWorld() {
+  const w = { toasts: [], states: [], held: new Map(), made: [], gdm: 0, ended: 0, micGate: null, closed: [] };
+  const track = (kind) => { const t = { kind, enabled: true, readyState: 'live', contentHint: '', stop() { this.readyState = 'ended'; }, clone: () => track(kind), applyConstraints: async () => {}, getSettings: () => ({ width: 1920 }) }; w.made.push(t); return t; };
+  w.K = load(['kit.js', 'tune.js', 'cast.js'], { toast: (t) => w.toasts.push(t), renderContacts() {}, contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1), status: 'online' }), showScreenPermission() {}, console: { warn() {}, error() {}, log() {} },
+    navigator: { mediaDevices: { getDisplayMedia: async () => { w.gdm++; return { getVideoTracks: () => [track('video')] }; }, getUserMedia: async () => { if (w.micGate) await w.micGate; return { getAudioTracks: () => [track('audio')] }; } } },
+    api: { screenPermission: async () => 'ok', micPermission: async () => true, captureEnded: async () => { w.ended++; return true; } } });
+  w.K.paint = () => {}; w.K.control = { owner: null, endGive() {} }; w.K.clip = { link: null };
+  w.mk = (pub) => { const x = { pub, closed: false, seen: false, ready: Promise.resolve(), mode: 'one', local: { addTrack() {}, removeTrack() {} }, screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null, scaled: false, remote: { screen: false, mic: false, rec: false }, ctl: { give: 'off' },
+    pc: { addTrack: (t) => ({ track: t, getParameters: () => ({ encodings: [{}] }), setParameters: async () => {} }), removeTrack() {}, getTransceivers: () => [] } }; w.held.set(pub, x); return x; };
+  w.K.sessions = { get: (pub) => w.held.get(pub) || null, open: (pub) => w.mk(pub), all: () => [...w.held.values()], openChannels() {}, dc: () => true, sendState: (x) => w.states.push(`${x.pub}:${x.micTrack ? +x.micTrack.enabled : '-'}`),
+    close: (x, why) => { x.closed = true; w.held.delete(x.pub); w.closed.push(`${x.pub}:${why}`); w.K.cast.sessionClosed(x, why); } };
+  w.mic = (pub) => { const x = w.held.get(pub); return x && x.micTrack ? (x.micTrack.enabled ? 'on' : 'muted') : 'none'; };
+  // a contact whose screen I watch, to whom I talked and then muted myself
+  w.watchMuted = async (pub) => { const x = w.mk(pub); x.remote.screen = true; await w.K.cast.talk(x); await w.K.cast.talk(x); return x; };
+  return w;
+}
+const idle = async () => { for (let i = 0; i < 25; i++) await tick(); };
+
+// F3: a mute the user set is lifted only by a click on a microphone button
+{
+  (async () => {
+    let w = castWorld(), cast = w.K.cast;
+    await cast.add('bob', 'one');
+    ok('F3 a share starts with the microphone on', w.mic('bob') === 'on' && w.K.mic.audienceOn === true);
+    const dee = await w.watchMuted('dee'); const s0 = w.states.length, t0 = w.toasts.length;
+    ok('F3 (a contact I watch, talked to, then muted)', w.mic('dee') === 'muted' && w.K.mic.audienceOn === true && dee.screenTrack === null);
+    await cast.add('dee', 'one');
+    ok('F3 she joins the audience: her mute stays, and it mutes the audience, which is one switch', w.mic('dee') === 'muted' && w.mic('bob') === 'muted' && w.K.mic.audienceOn === false);
+    ok('F3 every member is told and the user sees the toast', w.states.slice(s0).includes('bob:0') && w.states.slice(s0).includes('dee:0') && w.toasts.slice(t0).join() === 'Microphone muted for everyone you share with');
+    await cast.talk(w.held.get('bob'));
+    ok('F3 a click on the microphone button lifts it, for everyone', w.mic('bob') === 'on' && w.mic('dee') === 'on' && w.K.mic.audienceOn === true);
+
+    // the picker starts Bob (new) and Dee (muted) together: the same outcome whichever add ends first
+    const outcomes = [];
+    for (const first of ['bob', 'dee']) {
+      w = castWorld(); cast = w.K.cast; await w.watchMuted('dee'); const bob = w.mk('bob');
+      let go; const gate = new Promise((r) => { go = r; }); (first === 'bob' ? w.held.get('dee') : bob).ready = gate;   // the other one's connection is ready later
+      const both = Promise.all([cast.add('bob', 'one'), cast.add('dee', 'one')]); await idle(); go(); await both;
+      outcomes.push(`${w.mic('bob')},${w.mic('dee')},${w.K.mic.audienceOn},${w.toasts.filter((t) => /muted for everyone/.test(t)).length}`);
+    }
+    ok('F3 Bob and the muted Dee ticked together: both muted, switch off, one toast, in either order', outcomes[0] === 'muted,muted,false,1' && outcomes[1] === outcomes[0]);
+
+    // an audience of one that the user muted; a second joins while the first leaves
+    w = castWorld(); cast = w.K.cast; await cast.add('bob', 'one'); await cast.talk(w.held.get('bob'));
+    const muted = w.mic('bob') === 'muted' && w.K.mic.audienceOn === false;
+    const cy = w.mk('cy'); let go; cy.ready = new Promise((r) => { go = r; });
+    const joining = cast.add('cy', 'one'); await idle(); cast.remove('bob'); go(); await joining;
+    ok('F3 a muted audience stays muted when its only member leaves while the next one joins', muted && w.mic('cy') === 'muted' && w.K.mic.audienceOn === false && w.gdm === 1);
+    cast.stop('user'); await idle(); await cast.add('eve', 'one');
+    ok('F3 a new capture starts with the microphone on again', w.gdm === 2 && w.mic('eve') === 'on' && w.K.mic.audienceOn === true);
+
+    w = castWorld(); cast = w.K.cast; await w.watchMuted('dee'); const t1 = w.toasts.length; await cast.add('dee', 'one');
+    ok('F3 the muted contact as the only member: muted, and no toast about everyone', w.mic('dee') === 'muted' && w.K.mic.audienceOn === false && w.toasts.length === t1);
+    await cast.add('bob', 'one');
+    ok('F3 whoever joins after that gets the switch as it stands', w.mic('bob') === 'muted');
+  })().catch((e) => { console.log('FAIL  F3 threw:', e.stack); process.exitCode = 1; });
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
