@@ -49,8 +49,10 @@
     const sharing = !!(mine && sess.screenTrack), watching = !!(mine && sess.remote.screen);
     const viewers = K.cast.count(), casting = K.capture.state === 'live' || K.cast.members.size > 0;   // my screen goes out already, to someone
     const link = K.clip.link, linked = !!link && link.sess === sess;                                    // the clipboard is shared in this chat's session
-    const btn = $('btnShare'); btn.textContent = sharing ? '■ Stop sharing' : casting ? '＋ Add to share' : '⇡ Share screen'; btn.classList.toggle('on', sharing);
-    btn.title = sharing ? (viewers >= 2 ? 'Stop sending your screen to this contact; the others keep it' : 'Stop sending your screen') : casting ? 'Send the screen you are sharing to this contact as well, one click' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
+    // The button stops what it shows as running: also for a contact of the audience that is away, or whose share is still being started.
+    const stops = sharing || K.cast.members.has(pub);
+    const btn = $('btnShare'); btn.textContent = stops ? '■ Stop sharing' : casting ? '＋ Add to share' : '⇡ Share screen'; btn.classList.toggle('on', stops);
+    btn.title = stops ? (viewers >= 2 ? 'Stop sending your screen to this contact; the others keep it' : 'Stop sending your screen') : casting ? 'Send the screen you are sharing to this contact as well, one click' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
     $('shareMenu').querySelectorAll('button[data-mode]').forEach((b) => b.classList.toggle('hidden', sharing));   // one way or two way is chosen before a share; the ▾ stays for the audience picker
     const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(sess.micTrack && sess.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = (on ? 'Mute your microphone' : sess.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone') + (sharing && K.cast.members.size >= 2 ? ' for everyone you share with' : ''); }
     const pill = $('sharePill'); const state = !mine ? '' : conn === 'connected' || conn === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') + (sharing && viewers >= 2 ? ` · ${viewers} viewers` : '') + (linked ? ' · clipboard' : '') : conn === 'failed' ? 'Failed' : 'Connecting…';
@@ -106,7 +108,7 @@
   K.paint = render;
   K.paintStats = (sess) => { if (K.viewer.bound === sess) $('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
 
-  $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if (sess && sess.screenTrack) K.cast.remove(S.current); else K.cast.add(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
+  $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if ((sess && sess.screenTrack) || K.cast.members.has(S.current)) K.cast.remove(S.current); else K.cast.add(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
   $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
   $('shareMenu').querySelectorAll('button[data-mode]').forEach((b) => (b.onclick = async () => { $('shareMenu').classList.add('hidden'); S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.mode); render(); toast(b.dataset.mode === 'two' ? 'Two way: your contact will be asked to share their screen too' : 'One way: only your screen is sent', 'ok'); }));
   $('shareCastOpen').onclick = () => { $('shareMenu').classList.add('hidden'); openPicker(); };

@@ -867,6 +867,21 @@ function pageWorld(extra = {}) {
   })().catch((e) => { console.log('FAIL  F7 threw:', e.stack); process.exitCode = 1; });
 }
 
+// F8: the chat button stops a member of the audience in whatever state: watching, away, or still being added
+{
+  const w = pageWorld(), K = w.K, btn = w.$('btnShare');
+  w.sess('bob', true); K.capture.state = 'live';
+  w.S.contacts.push({ pub: 'cy', name: 'Cy', status: 'offline' }, { pub: 'dee', name: 'Dee', status: 'online' }, { pub: 'eve', name: 'Eve', status: 'online' });
+  K.cast.members.set('cy', { state: 'away', mode: 'one', timer: null, back: null }); K.cast.members.set('dee', { state: 'joining', mode: 'one', timer: null, back: null });
+  const text = (pub) => { w.S.current = pub; K.paint(); return btn.textContent; };
+  ok('F8 the button reads Stop sharing in the chat of a watching, an away and a joining member; Add to share for anyone else', [text('bob'), text('cy'), text('dee'), text('eve')].join() === '■ Stop sharing,■ Stop sharing,■ Stop sharing,＋ Add to share');
+  w.S.current = 'cy'; w.toasts.length = 0; btn.onclick();
+  ok('F8 a click in the away member\'s chat takes it out of the audience: no "offline" toast, nothing added', !K.cast.members.has('cy') && w.toasts.length === 0 && K.cast.members.size === 2);
+  w.S.current = 'dee'; btn.onclick();
+  ok('F8 a click in the chat of a member that is still being added takes it out as well', !K.cast.members.has('dee') && K.cast.members.size === 1 && w.toasts.length === 0);
+  ok('F8 and the button is back to Add to share there', text('cy') === '＋ Add to share' && text('dee') === '＋ Add to share');
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
