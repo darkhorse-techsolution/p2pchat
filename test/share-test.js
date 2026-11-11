@@ -230,6 +230,28 @@ const tick = () => new Promise((r) => setImmediate(r));
   ok('R5 a prompt that is not on screen closes nothing', st.closes === 1 && st.open === 'mSettings' && !st.hidden.has('mSettings'));
 }
 
+// R6: Allow is disarmed from the moment the dialog can be seen: when it opens, and again when the window is shown or focused
+{
+  const els = new Map(), timers = [], win = {}; let active = null;
+  const $ = (id) => { if (!els.has(id)) { const hid = new Set(); els.set(id, { id, disabled: false, textContent: '', title: '', style: {}, classList: { contains: (c) => hid.has(c), add: (c) => hid.add(c), remove: (c) => hid.delete(c), toggle() {} }, focus() { active = id; }, addEventListener() {}, requestVideoFrameCallback() {} }); } return els.get(id); };
+  const K = load(['kit.js', 'tune.js', 'viewer.js'], { $, S: { current: null }, contact: () => ({ verified: true }), toast() {}, document: { addEventListener() {} },
+    addEventListener: (t, f) => { win[t] = f; }, setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; } });
+  const run = (ms) => { for (const t of timers.splice(0)) if (t.on && t.ms <= ms) t.fn(); else if (t.on) timers.push(t); };   // fires what is due within ms, keeps the rest
+  const sess = { pub: 'bobbobbobbob' }; $('mControl').classList.add('hidden');
+  K.control = { pending: { sess }, isTaking: () => false }; K.prompt = (id) => $(id).classList.remove('hidden');
+  K.viewer.showAsk(sess);
+  const atOpen = $('controlYes').disabled; run(60); const focusAtOpen = active; run(K.ARM_MS);
+  ok('R6 the dialog opens with Allow disarmed and the keyboard on Deny, and arms after K.ARM_MS', atOpen === true && focusAtOpen === 'controlNo' && $('controlYes').disabled === false && $('controlWho').textContent === '(verified, key bobbobbo)');
+  active = 'input';                                             // the window was hidden: showing it puts the keyboard in the composer (ui/app.js)
+  K.viewer.seen();
+  const again = $('controlYes').disabled; run(60); const focusAgain = active, still = $('controlYes').disabled; run(K.ARM_MS);
+  ok('R6 shown again with the request still open: disarmed anew for K.ARM_MS, the keyboard back on Deny', again === true && focusAgain === 'controlNo' && still === true && $('controlYes').disabled === false);
+  active = 'input'; win.focus();
+  ok('R6 the same when the window gets the focus', $('controlYes').disabled === true && (run(60), active) === 'controlNo');
+  run(K.ARM_MS); K.control.pending = null; active = 'input'; K.viewer.seen(); win.focus(); run(K.ARM_MS);
+  ok('R6 with no request pending nothing is touched', $('controlYes').disabled === false && active === 'input' && timers.length === 0);
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

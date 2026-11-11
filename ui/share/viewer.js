@@ -48,14 +48,22 @@
   // and the key, opens with the keyboard on Deny and takes no click on Allow for a moment: a dialog that
   // comes up under a click or a key press meant for something else must not be answered by it.
   let arming = null;
+  function arm() {
+    const yes = $('controlYes'), p = K.control.pending;
+    yes.disabled = true; clearTimeout(arming); arming = setTimeout(() => { yes.disabled = false; }, K.ARM_MS);
+    setTimeout(() => { if (p && K.control.pending === p && !$('mControl').classList.contains('hidden')) $('controlNo').focus(); }, 60);
+  }
   function showAsk(sess) {
-    const c = contact(sess.pub), yes = $('controlYes');
+    const c = contact(sess.pub);
     $('controlName').textContent = K.nameOf(sess.pub);
     $('controlWho').textContent = `(${c && c.verified ? 'verified' : 'not verified'}, key ${sess.pub.slice(0, 8)})`;
-    yes.disabled = true; clearTimeout(arming); arming = setTimeout(() => { yes.disabled = false; }, K.ARM_MS);
+    arm();
     K.prompt('mControl');
-    setTimeout(() => { const p = K.control.pending; if (p && p.sess === sess && !$('mControl').classList.contains('hidden')) $('controlNo').focus(); }, 60);
   }
+  // The moment that counts is when the dialog can be seen, not when the request came: one that arrived
+  // while the window was hidden or in the background is disarmed anew, with the keyboard back on Deny,
+  // when the window is shown or gets the focus.
+  function seen() { if (K.control.pending && !$('mControl').classList.contains('hidden')) arm(); }
   function sessionClosed(sess) {
     const a = sess.remote.audioEl;
     if (a) { a.srcObject = null; a.remove(); sess.remote.audioEl = null; }
@@ -93,7 +101,7 @@
   }
   function onFullscreen(ev) { applyTheater(!!ev.on && !!K.viewer.bound); }
 
-  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, sessionClosed };
+  K.viewer = { bound: null, theater: false, backFor: null, rebind, audioFor, applyCtl, setFull, onFullscreen, askBack, showAsk, seen, sessionClosed };
 
   $('viewerFull').onclick = () => setFull();
   $('viewerVideo').ondblclick = () => { if (!taking()) setFull(); };   // while controlling, two clicks are theirs
@@ -117,5 +125,6 @@
     const onKey = (e) => { const sess = keysGoRemote(); if (!sess) return; e.preventDefault(); e.stopPropagation(); if (e.repeat) return; K.sessions.dc(sess, 'ctl', { t: 'k', c: e.code, d: e.type === 'keydown' ? 1 : 0 }); };
     document.addEventListener('keydown', onKey, true); document.addEventListener('keyup', onKey, true);
     window.addEventListener('blur', () => { const sess = taking(); if (sess) K.sessions.dc(sess, 'ctl', { t: 'r' }); });   // nothing stays pressed over there when this window loses the keyboard
+    window.addEventListener('focus', seen);
   }
 })();

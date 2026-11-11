@@ -453,7 +453,7 @@ window.api.onEvent(async (ev) => {
     case 'fullscreen': if (window.Share) window.Share.onFullscreen(ev); break;
     case 'control': if (window.Share) window.Share.onControl(ev); break;
     case 'cursor': if (window.Share) window.Share.onCursor(ev); break;
-    case 'shown': input.focus(); if (S.current && (contact(S.current)?.unread || 0) > 0) select(S.current); break;
+    case 'shown': input.focus(); if (window.Share) window.Share.onShown(); if (S.current && (contact(S.current)?.unread || 0) > 0) select(S.current); break;
   }
 });
 
