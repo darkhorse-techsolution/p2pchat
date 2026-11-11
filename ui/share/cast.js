@@ -169,10 +169,15 @@
     K.paint(); renderContacts();
   }
   // The picker's answer: these contacts get my screen and nobody else. New ones join one way. One that is
-  // away stays as it is: it comes back by itself or drops out when its time is up.
+  // away stays as it is: it comes back by itself or drops out when its time is up. The capture is held
+  // from the first removal to the last add: an answer that swaps the whole audience goes on with the
+  // capture that runs, not with a second one.
   function set(pubs) {
-    for (const pub of [...cast.members.keys()]) if (!pubs.includes(pub)) remove(pub);
-    for (const pub of pubs) if (!cast.members.has(pub)) add(pub, 'one');
+    cast.leasing++;
+    try {
+      for (const pub of [...cast.members.keys()]) if (!pubs.includes(pub)) remove(pub);
+      for (const pub of pubs) if (!cast.members.has(pub)) add(pub, 'one');   // each one that gets going holds the capture itself from here
+    } finally { cast.leasing--; capture.settle(); }
   }
   function stop(why) {
     for (const pub of new Set([...cast.members.keys(), ...[...capture.leases.keys()].map((x) => x.pub)])) remove(pub);

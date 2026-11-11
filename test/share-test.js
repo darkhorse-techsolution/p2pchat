@@ -693,9 +693,9 @@ const waitFor = async (cond, ms = 400) => { const t0 = Date.now(); while (!cond(
 
 // The audience code (share/cast.js) with devices and sessions that only record: add, remove, talk and set run for real.
 function castWorld() {
-  const w = { toasts: [], states: [], held: new Map(), made: [], gdm: 0, ended: 0, micGate: null, closed: [] };
+  const w = { toasts: [], states: [], held: new Map(), made: [], gdm: 0, ended: 0, micGate: null, closed: [], offline: new Set() };
   const track = (kind) => { const t = { kind, enabled: true, readyState: 'live', contentHint: '', stop() { this.readyState = 'ended'; }, clone: () => track(kind), applyConstraints: async () => {}, getSettings: () => ({ width: 1920 }) }; w.made.push(t); return t; };
-  w.K = load(['kit.js', 'tune.js', 'cast.js'], { toast: (t) => w.toasts.push(t), renderContacts() {}, contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1), status: 'online' }), showScreenPermission() {}, console: { warn() {}, error() {}, log() {} },
+  w.K = load(['kit.js', 'tune.js', 'cast.js'], { toast: (t) => w.toasts.push(t), renderContacts() {}, S: { capture: { supported: true }, protection: true }, contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1), status: w.offline.has(pub) ? 'offline' : 'online' }), showScreenPermission() {}, console: { warn() {}, error() {}, log() {} },
     navigator: { mediaDevices: { getDisplayMedia: async () => { w.gdm++; return { getVideoTracks: () => [track('video')] }; }, getUserMedia: async () => { if (w.micGate) await w.micGate; return { getAudioTracks: () => [track('audio')] }; } } },
     api: { screenPermission: async () => 'ok', micPermission: async () => w.micOk !== false, captureEnded: async () => { w.ended++; return true; } } });
   w.K.paint = () => {}; w.K.control = { owner: null, endGive() {} }; w.K.clip = { link: null };
@@ -848,6 +848,23 @@ function pageWorld(extra = {}) {
     await cast.talk(dee);
     ok('F6 the button of a contact I only watch starts it for that contact alone', w.mic('dee') === 'on' && w.K.mic.leases.size === 3 && w.mic('bob') === 'muted');
   })().catch((e) => { console.log('FAIL  F6 threw:', e.stack); process.exitCode = 1; });
+}
+
+// F7: a picker answer that swaps the whole audience goes on with the capture that runs
+{
+  (async () => {
+    let w = castWorld(), cast = w.K.cast;
+    cast.set(['bob', 'cy']); await idle();
+    const before = `${w.gdm},${w.K.capture.leases.size},${[...cast.members.keys()].join()}`;
+    cast.set(['dee', 'eve']); await idle();
+    ok('F7 every member unticked and two new ones ticked: the new audience gets the same capture', before === '1,2,bob,cy' && w.gdm === 1 && w.ended === 0 && w.K.capture.state === 'live' && w.K.capture.leases.size === 2 && [...cast.members].map(([p, m]) => `${p}:${m.state}`).join() === 'dee:live,eve:live');
+    ok('F7 the device track never stopped; the two old leases did', w.made.filter((t) => t.kind === 'video' && t.readyState === 'live').length === 3 && w.made.filter((t) => t.kind === 'video').length === 5);
+    cast.set([]); await idle();
+    ok('F7 an answer with nobody ticked stops the capture', w.K.capture.state === 'idle' && w.ended === 1 && cast.leasing === 0 && cast.members.size === 0);
+    w = castWorld(); cast = w.K.cast; cast.set(['bob']); await idle(); w.offline.add('zed');
+    cast.set(['zed']); await idle();
+    ok('F7 a swap whose new contact cannot be added does not leave the capture on', w.K.capture.state === 'idle' && w.ended === 1 && cast.leasing === 0 && cast.members.size === 0);
+  })().catch((e) => { console.log('FAIL  F7 threw:', e.stack); process.exitCode = 1; });
 }
 
 // P1: one pop-up per incoming share, per contact
