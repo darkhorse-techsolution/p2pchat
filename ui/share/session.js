@@ -82,7 +82,7 @@
     pc.ondatachannel = (e) => adoptChannel(sess, e.channel, true);
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') { sess.everConnected = true; clearTimeout(sess.connectTimer); sess.connectTimer = null; }
-      if (pc.connectionState === 'failed') { toast(`Screen share with ${K.nameOf(sess.pub)} failed. Check the call server in Settings.`, 'err'); close(sess, 'failed'); }
+      if (pc.connectionState === 'failed') { toast(`Screen share with ${K.label(sess.pub, 'a contact')} failed. Check the call server in Settings.`, 'err'); close(sess, 'failed'); }
       else K.paint();
     };
     sess.statsTimer = setInterval(() => pollStats(sess), 2000);
@@ -106,7 +106,7 @@
     sess.connectTimer = setTimeout(() => {
       sess.connectTimer = null;
       if (sess.closed || sess.everConnected) return;
-      toast(`Screen share with ${K.nameOf(sess.pub)} did not connect`, 'err');
+      toast(`Screen share with ${K.label(sess.pub, 'a contact')} did not connect`, 'err');
       send(sess, { op: 'bye' }); close(sess, 'timeout');
     }, K.CONNECT_MS);
   }
@@ -153,6 +153,7 @@
   // watchdog say bye themselves before they call it.
   function close(sess, why) {
     if (sess.closed) return;
+    const hush = K.hushed();            // read before the audience shrinks by this very session: its last toast must not name it to the viewers who stay
     sess.closed = true;                 // first: everything that was waiting on this session checks it and stops
     if (map.get(sess.pub) === sess) map.delete(sess.pub);
     remember(sess, why);
@@ -164,9 +165,9 @@
     K.cast.sessionClosed(sess, why);
     K.viewer.sessionClosed(sess);
     if (sess.pc) { try { sess.pc.close(); } catch {} }
-    const name = K.nameOf(sess.pub);
+    const name = K.label(sess.pub, 'A contact', hush);
     if (why === 'bye') toast(`${name} ended the screen share`);
-    if (why === 'offline') toast(`Screen share ended: ${name} went offline`, 'err');
+    if (why === 'offline') toast(`Screen share ended: ${K.label(sess.pub, 'a contact', hush)} went offline`, 'err');
     if (why === 'refused') toast(`${name} cannot take the screen share right now (they are in another one)`, 'err');
     K.paint(); renderContacts();
   }
@@ -224,7 +225,7 @@
   function onState(sess, ev) {
     const was = sess.remote.screen, wasRec = sess.remote.rec;
     sess.remote.screen = ev.screen; sess.remote.mic = ev.mic; sess.remote.mode = ev.mode; sess.remote.rec = !!ev.rec;
-    if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${contact(ev.pub)?.name || 'Your contact'} is recording your screen share`);
+    if (sess.remote.rec && !wasRec && sess.screenTrack) toast(`${K.label(ev.pub, 'A viewer')} is recording your screen share`);
     if (ev.screen && !was && S.current !== ev.pub) toast(`${contact(ev.pub)?.name || 'A contact'} is sharing their screen: open that chat to watch`);
     if (!ev.screen) { sess.remote.cast = 0; K.control.stopTaking(sess); }   // no screen left to drive, or to ask for
     if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; K.viewer.askBack(sess); }

@@ -4,10 +4,12 @@
 // At the end, main's memory of which share already raised its pop-up (main/sharepop.js).
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const ok = (n, v) => { console.log((v ? 'PASS' : 'FAIL').padEnd(5), n); if (!v) process.exitCode = 1; };
+const pages = new WeakMap();   // the context a ShareKit was loaded into, for what a file puts on window beside it (window.Share)
 function load(files, globals = {}) {
   const ctx = vm.createContext(Object.defineProperties({ console, setTimeout, clearTimeout }, Object.getOwnPropertyDescriptors(globals)));   // a getter stays a getter
   ctx.window = ctx;
   for (const f of files) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'ui', 'share', f), 'utf8'), ctx, { filename: f });
+  pages.set(ctx.ShareKit, ctx);
   return ctx.ShareKit;
 }
 const js = (v) => JSON.stringify(v);   // values made inside the context are compared as text
@@ -182,7 +184,7 @@ function controlWorld() {
   w.K.sessions = { dc: (sess, _label, msg) => { w.sent.push(`${sess.pub}:${JSON.stringify(msg)}`); return true; } };
   w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess, o) => { w.dialogs.push(sess.pub); w.asks.push(o); }, clipTicked: () => w.ticked, syncKeys: () => { w.keys++; } };   // clipTicked: the clipboard box of the dialog, as the test leaves it
   w.K.clip = { link: null, sync: (sess) => w.synced.push(sess.pub), off() {} };
-  w.K.cast = { retier() {} }; w.K.paint = () => {}; w.K.unprompt = () => {};
+  w.K.cast = { retier() {}, members: new Map() }; w.K.paint = () => {}; w.K.unprompt = () => {};
   w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null, giveClip: false, takeClip: false, askedClip: false } });
   w.from = (sess, msg) => w.K.control.onMessage(sess, msg);       // a message of theirs, as the session hands it on
   return w;
@@ -746,6 +748,64 @@ const idle = async () => { for (let i = 0; i < 25; i++) await tick(); };
     await cast.add('bob', 'one');
     ok('F3 whoever joins after that gets the switch as it stands', w.mic('bob') === 'muted');
   })().catch((e) => { console.log('FAIL  F3 threw:', e.stack); process.exitCode = 1; });
+}
+
+// The whole share code of the page (every file of ui/share and ui/share.js) over elements that only keep
+// what is set on them: for what the paint writes and what window.Share answers.
+function pageWorld(extra = {}) {
+  const w = { els: new Map(), toasts: [], timers: [], sent: [], S: { me: { pub: 'me' }, current: null, contacts: [], settings: {}, capture: { supported: true }, protection: true } };
+  w.$ = (id) => { if (!w.els.has(id)) { const cls = new Set(); w.els.set(id, { id, textContent: '', title: '', className: '', disabled: false, checked: false, style: {}, dataset: {}, srcObject: null, classList: { contains: (c) => cls.has(c), add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle: (c, on) => { if (on === undefined ? !cls.has(c) : on) cls.add(c); else cls.delete(c); } },
+    querySelectorAll: () => [], querySelector: () => null, addEventListener() {}, removeEventListener() {}, requestVideoFrameCallback() {}, focus() {}, play: async () => {}, appendChild() {}, append() {}, remove() {} }); } return w.els.get(id); };
+  w.K = load(['kit.js', 'tune.js', 'session.js', 'cast.js', 'control.js', 'clip.js', 'record.js', 'viewer.js', '../share.js'], { $: w.$, S: w.S, toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), renderContacts() {}, closeLightbox() {}, show() {}, closeModal() {},
+    contact: (pub) => w.S.contacts.find((c) => c.pub === pub), document: { getElementById: w.$, addEventListener() {}, createElement: () => w.$('made' + w.els.size), body: w.$('body') }, addEventListener() {}, performance: { now: () => 0 },
+    setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; w.timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; }, setInterval: () => 0, clearInterval() {},
+    MediaStream: class { constructor() { this.t = []; } addTrack(t) { this.t.push(t); } removeTrack() {} },
+    api: { share: async (pub, f) => { w.sent.push(`${pub}:${f.op}`); return true; }, iceConfig: async () => ({ iceServers: [] }), controlRevoke: async () => true, log: async () => true, keysRemote: async () => false, fullscreen: async (on) => on, captureEnded: async () => true, recordStop: async () => null }, ...extra });
+  w.Share = pages.get(w.K).Share;
+  // a session as session.js makes one, put into the registry by hand: `out` says my screen goes to that contact
+  w.sess = (pub, out, theirs = false) => { const x = { pub, id: 's-' + pub, pc: null, closed: false, peerSids: new Set(), statsTimer: null, connectTimer: null, markSeen() {}, ready: Promise.resolve(), inbox: Promise.resolve(), seen: true, everConnected: true, screenTrack: out ? { stop() {}, contentHint: '' } : null, micTrack: null, screenSender: null, micSender: null, local: {}, mode: 'one', rec: null, stats: '',
+    remote: { screen: theirs, mic: false, mode: 'one', rec: false, cast: 0, video: null, audio: null, view: null, audioEl: null }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, dc: null, mv: null, cp: null, chans: [], sent: 0, recv: 0, cursor: null, token: null, giveClip: false, takeClip: false, askedClip: false } };
+    w.K.sessions.map.set(pub, x); w.S.contacts.push({ pub, name: pub[0].toUpperCase() + pub.slice(1), status: 'online' }); if (out) w.K.cast.members.set(pub, { state: 'live', mode: 'one', timer: null, back: null }); return x; };
+  return w;
+}
+
+// F4: where the viewers read this window, and there is more than one of them, nothing outside the dialog and the picker names a contact
+{
+  (async () => {
+    const world = (capturable, viewers) => { const w = pageWorld(); w.S.protection = !capturable; for (const pub of viewers) w.sess(pub, true); return w; };
+    let w = world(true, ['bob', 'cy']);
+    ok('F4 hushed: the window shows in captures and my screen goes to two contacts', w.K.hushed() === true && w.K.label('bob', 'A viewer') === 'A viewer');
+    ok('F4 not with one viewer, and not with a window that captures leave out', world(true, ['bob']).K.hushed() === false && world(false, ['bob', 'cy']).K.hushed() === false && world(false, ['bob', 'cy']).K.label('bob', 'A viewer') === 'Bob');
+    const run = async (capturable, viewers) => {
+      const w = world(capturable, viewers), K = w.K, Share = w.Share, out = {}, bob = K.sessions.get('bob');
+      out.marks = viewers.map((p) => Share.live(p)).join();
+      K.control.owner = { sess: bob, token: 't' }; bob.ctl.give = 'on'; w.S.current = viewers[1] || null; K.paint();
+      out.stop = w.$('btnStopCtl').textContent;
+      w.toasts.length = 0; K.control.endGive(bob, 'released');
+      const cy = K.sessions.get('cy'); if (cy) { K.control.pending = { sess: bob, timer: null }; K.control.onMessage(cy, { t: 'req' }); K.control.pending = null; }   // a second viewer asks while the first one's dialog is open
+      bob.remote.rec = false; K.sessions.onFrame({ pub: 'bob', sid: bob.id, op: 'state', screen: false, mic: true, mode: 'one', rec: true }); await idle();
+      w.S.contacts.push({ pub: 'off', name: 'Offie', status: 'offline' }); await K.cast.add('off', 'one');
+      out.toasts = w.toasts.splice(0).join(' | ');
+      // the three ways a session's end is told; the audience shrinks by that very session before the toast
+      for (const why of ['bye', 'offline', 'refused']) { const x = w.sess('end' + why, true); K.sessions.close(x, why); }
+      out.ends = w.toasts.splice(0).join(' | ');
+      return out;
+    };
+    const two = await run(true, ['bob', 'cy']), one = await run(true, ['bob']), safe = await run(false, ['bob', 'cy']);
+    ok('F4 hushed: no mark on the rows my screen goes to, no name on Stop control', two.marks === ',' && two.stop === '✋ Stop control');
+    ok('F4 hushed: the toasts about control, recording and an offline contact name nobody', two.toasts === 'The viewer stopped controlling your screen | Another viewer also asked for control | A viewer is recording your screen share | That contact is offline: a screen share needs them connected');
+    ok('F4 hushed: nor do the toasts about a share that ended, also when it was the second-last viewer', two.ends === 'A contact ended the screen share | Screen share ended: a contact went offline | A contact cannot take the screen share right now (they are in another one)');
+    ok('F4 one viewer: marks, the name on the button and in the toasts, as before', one.marks === 'out' && one.stop === '✋ Stop control (Bob)' && one.toasts === 'Bob stopped controlling your screen | Bob is recording your screen share | Offie is offline: a screen share needs them connected');
+    ok('F4 a window that is not in the picture: everything named, as before', safe.marks === 'out,out' && safe.stop === '✋ Stop control (Bob)' && safe.toasts === 'Bob stopped controlling your screen | Cy also asked for control | Bob is recording your screen share | Offie is offline: a screen share needs them connected' && safe.ends === 'Endbye ended the screen share | Screen share ended: Endoffline went offline | Endrefused cannot take the screen share right now (they are in another one)');
+    // a share that fails, and one that never connects
+    for (const [capturable, want] of [[true, 'Screen share with a contact did not connect | Screen share with a contact failed. Check the call server in Settings.'], [false, 'Screen share with Dee did not connect | Screen share with Eve failed. Check the call server in Settings.']]) {
+      const pcs = [], x = pageWorld({ RTCPeerConnection: function () { const pc = { connectionState: 'new', close() {}, getStats: async () => new Map() }; pcs.push(pc); return pc; } }); x.S.protection = !capturable; x.sess('bob', true); x.sess('cy', true);
+      x.S.contacts.push({ pub: 'dee', name: 'Dee', status: 'online' }, { pub: 'eve', name: 'Eve', status: 'online' });
+      x.K.sessions.open('dee', 'sid1', true); x.timers.filter((t) => t.on && t.ms === x.K.CONNECT_MS).forEach((t) => t.fn());
+      const eve = x.K.sessions.open('eve', 'sid2', false); await eve.ready; pcs[pcs.length - 1].connectionState = 'failed'; pcs[pcs.length - 1].onconnectionstatechange();
+      ok(`F4 ${capturable ? 'hushed: a share that does not connect or fails names nobody' : 'not hushed: those two toasts name the contact'}`, x.toasts.join(' | ') === want);
+    }
+  })().catch((e) => { console.log('FAIL  F4 threw:', e.stack); process.exitCode = 1; });
 }
 
 // P1: one pop-up per incoming share, per contact

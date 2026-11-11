@@ -57,7 +57,7 @@
     pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle') + (state ? '' : ' hidden');   // the class list in one piece: set after `hidden`, it used to put an empty pill back on screen
     // whoever drives my screen can be stopped from every chat; elsewhere than in their own the button says who it is
     const own = K.control.owner, driven = !!own && own.sess.ctl.give === 'on', stop = $('btnStopCtl');
-    stop.classList.toggle('hidden', !driven); stop.textContent = driven && own.sess.pub !== pub ? `✋ Stop control (${K.nameOf(own.sess.pub)})` : '✋ Stop control';
+    stop.classList.toggle('hidden', !driven); stop.textContent = driven && own.sess.pub !== pub && !K.hushed() ? `✋ Stop control (${K.nameOf(own.sess.pub)})` : '✋ Stop control';
     // and so can the clipboard that is shared with them: in every chat, control stays
     const cbtn = $('btnClip'); cbtn.classList.toggle('hidden', !(link && link.role === 'give')); cbtn.textContent = K.viewer.clipLabel();
     const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
@@ -101,7 +101,8 @@
   }
   const sessionPub = () => { const sess = pick(); return sess ? sess.pub : null; };
   // what the contact list marks: '' no session, 'out' my screen goes to them, 'both' theirs comes back as well, 'in' anything else
-  const live = (pub) => { const x = map.get(pub); return !x ? '' : !x.screenTrack ? 'in' : x.remote.screen ? 'both' : 'out'; };
+  // Where the viewers read this window (K.hushed) a contact my screen goes to gets no mark at all: the list would tell each of them who the others are.
+  const live = (pub) => { const x = map.get(pub); return !x ? '' : !x.screenTrack ? 'in' : K.hushed() ? '' : x.remote.screen ? 'both' : 'out'; };
   K.paint = render;
   K.paintStats = (sess) => { if (K.viewer.bound === sess) $('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
 

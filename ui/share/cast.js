@@ -99,7 +99,7 @@
   async function add(pub, mode) {
     const c = contact(pub);
     if (!c) return false;
-    if (c.status !== 'online') { toast(`${c.name} is offline: a screen share needs them connected`, 'err'); return false; }
+    if (c.status !== 'online') { toast(`${K.hushed() ? 'That contact' : c.name} is offline: a screen share needs them connected`, 'err'); return false; }
     const had = cast.members.get(pub);
     if (had && (had.state === 'joining' || had.state === 'live')) return true;
     if (cast.count() >= K.tune.MAX_AUDIENCE) { toast(`A screen share goes to at most ${K.tune.MAX_AUDIENCE} contacts at once`, 'err'); return false; }

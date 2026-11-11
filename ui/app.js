@@ -445,7 +445,7 @@ window.api.onEvent(async (ev) => {
         row.innerHTML = `<span>${esc(ev.name)}</span><span class="muted small">${esc(ev.host)}</span><span class="spacer"></span>`;
         const b = document.createElement('button'); b.className = 'primary'; b.textContent = 'Add'; b.onclick = () => { $('addInvite').value = ev.invite; $('addGo').click(); }; row.appendChild(b); $('peers').appendChild(row); }
       break;
-    case 'protection': S.capture = { supported: ev.supported, how: ev.how }; renderShield(ev.on); if (window.Share) window.Share.render(); break;   // a window that shows in captures names nobody in the audience bar
+    case 'protection': S.capture = { supported: ev.supported, how: ev.how }; renderShield(ev.on); if (window.Share) window.Share.render(); renderContacts(); break;   // a window that shows in captures names nobody in the audience bar, and marks no row
     case 'relay': renderRelay(ev.status); if (ev.status === 'up') refreshState(); break;
     case 'opacity': renderOpacity(ev.opacity); break;
     case 'fullHotkey': if (window.Share && window.Share.active()) window.Share.setFull(); break;

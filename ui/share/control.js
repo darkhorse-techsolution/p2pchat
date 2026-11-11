@@ -59,7 +59,7 @@
         if (!sess.screenTrack) { dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); return; }
         if (C.owner && C.owner.sess === sess && ctl.give === 'on') { dc(sess, { t: 'ctl', on: true, clip: ctl.giveClip ? 1 : 0 }); return; }
         if ((C.pending && C.pending.sess === sess) || (C.owner && C.owner.sess === sess)) return;   // its dialog is open, or its grant is being started
-        if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); once(sess, 'busy', `${name} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
+        if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); once(sess, 'busy', `${K.label(sess.pub, 'Another viewer')} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
         if (Date.now() - (refused.get(sess.pub) || 0) < K.DENY_COOLDOWN_MS) { dc(sess, { t: 'ctl', on: false }); return; }
         {
           // the dialog offers the clipboard only when they asked for it and nothing here stands against it; if not, it says why
@@ -131,7 +131,7 @@
       ctl.giveClip = ticked && clipOn();   // asked for, ticked, and still possible now that main has answered
       try { sess.screenTrack.contentHint = K.tune.hint(true); } catch {}
       dc(sess, { t: 'ctl', on: true, clip: ctl.giveClip ? 1 : 0 });
-      toast(`${name} now uses your mouse and keyboard. ✋ Stop control next to the Sharing pill ends it.${ctl.giveClip ? ' Clipboard text is shared both ways.' : ''}`);
+      toast(`${K.label(sess.pub, 'A viewer')} now uses your mouse and keyboard. ✋ Stop control next to the Sharing pill ends it.${ctl.giveClip ? ' Clipboard text is shared both ways.' : ''}`);
       K.cast.retier();   // whoever drives gets the full frame rate, whatever the audience
       K.clip.sync(sess);
     } else {
@@ -166,7 +166,7 @@
     if (was === 'on') { try { if (sess.screenTrack) sess.screenTrack.contentHint = K.tune.hint(false); } catch {} }
     if (!sess.closed && why !== 'released') dc(sess, { t: 'ctl', on: false, why: why === 'denied' ? undefined : why === 'expired' ? 'expired' : why === 'stopped' ? 'stopped' : 'helper' });
     K.clip.sync(sess);   // the clipboard was shared with their control: it ends here as well
-    if (was === 'on') { toast(why === 'released' ? `${K.nameOf(sess.pub)} stopped controlling your screen` : why === 'stopped' || why === 'closed' ? 'Remote control stopped' : `Remote control stopped: ${why}`); K.cast.retier(); }
+    if (was === 'on') { toast(why === 'released' ? `${K.label(sess.pub, 'The viewer')} stopped controlling your screen` : why === 'stopped' || why === 'closed' ? 'Remote control stopped' : `Remote control stopped: ${why}`); K.cast.retier(); }
     K.paint();
   }
   // main: the input helper stopped by itself

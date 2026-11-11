@@ -4,7 +4,7 @@
 // needs from it sits on window.ShareKit (K) and is looked up there at call time, so the order of
 // the script tags only matters for what runs while a file loads.
 //
-// Reads from app.js: $, S, contact, show, closeLightbox, openModal, window.closeModal. Reads K.viewer at call time.
+// Reads from app.js: $, S, contact, show, closeLightbox, openModal, window.closeModal. Reads K.viewer and K.cast at call time.
 (() => {
   const K = window.ShareKit = {};
   K.PROTO = 2;             // sent as `v` on every share frame; a peer that sends none is 0.7.1 or older
@@ -23,6 +23,11 @@
   // True where this window is part of what a screen capture shows (Linux, the monitor build, blocking
   // switched off): what it says about the audience is then on every viewer's screen.
   K.capturable = () => !(S.capture && S.capture.supported && S.protection);
+  // There, with my screen going to more than one contact, each viewer reads what this window says about
+  // the others. So outside the control dialog and the picker nothing names a contact then: no marker on
+  // a contact's row, no name on a button, and the toasts say "a viewer" or "a contact" (K.label).
+  K.hushed = () => K.capturable() && K.cast.members.size > 1;
+  K.label = (pub, plain, hush = K.hushed()) => (hush ? plain : K.nameOf(pub));
   // A share prompt has to be seen: it sits under the full-screen viewer and under the image viewer, and
   // only one modal shows at a time. So it leaves full screen and closes what is open before it shows.
   // The one thing it does not close is the control dialog: that one stays until it is answered. Anything
