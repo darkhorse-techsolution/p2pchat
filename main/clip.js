@@ -80,6 +80,9 @@ function createClipLink({ backend, platform, enabled, grant }) {
 
   // A text from the peer goes onto this clipboard. It is remembered as theirs, so the next look does
   // not send it back; what the OS made of it is read once, so that is not taken for a new copy either.
+  // Remembered only once it is written: a write that throws leaves `last` as it was, so the text that is
+  // still on the clipboard (it can be the one from before the link) is not taken for a new copy. And
+  // nothing is read back for a link that stopped while the write was under way.
   function apply(id, text) {
     return run(async () => {
       const l = link;
@@ -87,8 +90,9 @@ function createClipLink({ backend, platform, enabled, grant }) {
       if (!may(l)) { stop('not allowed'); return false; }
       const t = norm(text);
       if (t === l.last) { l.peer = t; return true; }
-      l.peer = l.last = t;
       await backend.writeText(text);
+      if (link !== l) return true;
+      l.peer = l.last = t;
       try { const now = norm(await backend.readText()); if (link === l) l.last = now; } catch {}
       return true;
     });

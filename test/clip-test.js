@@ -15,8 +15,8 @@ const fire = async () => { for (const t of live()) t.fn(); await settle(); };
 
 // a machine: a clipboard in memory that counts its reads and writes, the Settings switch, a grant, a link
 function machine(platform = 'darwin') {
-  const m = { text: '', reads: 0, writes: 0, marks: new Set(), failRead: false, on: true, texts: [], notes: [], stops: [] };
-  m.backend = { readText: async () => { m.reads++; if (m.failRead) throw new Error('no clipboard'); return m.text; }, writeText: async (v) => { m.writes++; m.text = String(v); }, has: async (f) => m.marks.has(f) };
+  const m = { text: '', reads: 0, writes: 0, marks: new Set(), failRead: false, failWrite: 0, on: true, texts: [], notes: [], stops: [] };   // failWrite: that many writes throw
+  m.backend = { readText: async () => { m.reads++; if (m.failRead) throw new Error('no clipboard'); return m.text; }, writeText: async (v) => { m.writes++; if (m.failWrite) { m.failWrite--; throw new Error('clipboard busy'); } m.text = String(v); }, has: async (f) => m.marks.has(f) };
   m.control = { start: async () => ({ ok: true }), stop() {}, event() {} };
   m.grant = createGrant({ control: m.control });
   m.clip = createClipLink({ backend: m.backend, platform, enabled: () => m.on, grant: m.grant });
@@ -164,6 +164,25 @@ const DISPLAY = { id: 1 };
   const t12 = live()[0]; t12.fn(); t12.fn(); t12.fn(); await settle(); m.backend.readText = slow; release(); await settle();
   ok('K12 three timer ticks during one slow read make one read', m.reads === 2 && m.texts.join() === `${r.id}:slow`);
   m.clip.stop('test');
+
+  // V2: a write that fails does not make the text from before the link look like a new copy (review of stage D, MEDIUM 1)
+  for (const role of ['give', 'take']) {
+    m = machine(); m.text = 'PRE-LINK'; tok = role === 'give' ? await m.allow('bob', true) : null;
+    r = await m.clip.start({ pub: 'bob', role, token: tok });
+    const look = async () => { if (role === 'give') await fire(); else { m.clip.poke(r.id); await settle(); } };
+    m.failWrite = 1; let threw = false; try { await m.clip.apply(r.id, 'from the peer'); } catch { threw = true; }
+    await look(); await look();
+    ok(`V2 ${role}: the peer's text could not be written; what was on the clipboard before the link is still there and is not sent`, threw && m.text === 'PRE-LINK' && m.texts.length === 0);
+    const wrote = await m.clip.apply(r.id, 'second'); await look();
+    ok(`V2 ${role}: the next text of the peer is written and not sent back`, wrote === true && m.text === 'second' && m.texts.length === 0);
+    m.text = 'mine'; await look();
+    ok(`V2 ${role}: and a copy made here goes out as before`, m.texts.join() === `${r.id}:mine`);
+    m.clip.stop('test');
+  }
+  m = machine(); m.text = 'PRE-LINK'; r = await m.clip.start({ pub: 'bob', role: 'take' });
+  const write2 = m.backend.writeText; let letGo; m.backend.writeText = (v) => new Promise((res) => { letGo = () => res(write2(v)); });
+  const p2 = m.clip.apply(r.id, 'late'); await settle(); m.clip.stop('renderer'); const reads2 = m.reads; letGo(); await p2; await settle();
+  ok('V2 a link that stopped while a write was under way is not read again after it', m.reads === reads2 && m.clip.status().on === false);
 
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.log('FAIL  harness threw:', e.stack); process.exit(1); });
