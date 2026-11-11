@@ -881,6 +881,24 @@ function pageWorld(extra = {}) {
   ok('F8 and the button is back to Add to share there', text('cy') === '＋ Add to share' && text('dee') === '＋ Add to share');
 }
 
+// F9: a share prompt that another modal was opened over is the open modal again when that one closes
+{
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ui', 'app.js'), 'utf8'), from = src.indexOf('// ---------- modals ----------'), to = src.indexOf('// ---------- sidebar ----------');
+  const hidden = new Set(['backdrop', 'mControl', 'mShareBack', 'mCast', 'mSettings', 'mInfo']); let seen = 0;
+  const $ = (id) => ({ classList: { add: () => hidden.add(id), remove: () => hidden.delete(id), contains: () => hidden.has(id) }, querySelector: () => null, focus() {}, set onclick(f) {} });
+  const ctx = vm.createContext({ $, S: {}, document: { querySelectorAll: () => [] }, setTimeout() {} }); ctx.window = ctx; ctx.Share = { onShown: () => { seen++; } };
+  vm.runInContext(src.slice(from, to) + '\nthis.t = { show, close, open: () => openModal };', ctx);
+  const t = ctx.t, up = (id) => !hidden.has(id);
+  for (const prompt of ['mControl', 'mShareBack', 'mCast']) {
+    t.show(prompt); t.show('mSettings'); seen = 0; t.close();
+    ok(`F9 Settings opened over ${prompt} and closed: the prompt is still up, behind the backdrop, and the open modal again`, up(prompt) && !up('mSettings') && up('backdrop') && t.open() === prompt && seen === 1);
+    t.close();
+    ok(`F9 and it closes like any modal after that (${prompt})`, !up(prompt) && !up('backdrop') && t.open() === null);
+  }
+  t.show('mInfo'); t.show('mSettings'); seen = 0; t.close();
+  ok('F9 any other modal is closed as before: the backdrop goes', !up('backdrop') && t.open() === null && seen === 0);
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

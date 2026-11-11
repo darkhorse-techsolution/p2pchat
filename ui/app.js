@@ -64,7 +64,17 @@ $('btnNav').onclick = toggleSidebar; $('btnNav2').onclick = toggleSidebar;
 // ---------- modals ----------
 let openModal = null;
 function show(id) { openModal = id; $('backdrop').classList.remove('hidden'); $(id).classList.remove('hidden'); const f = $(id).querySelector('input:not([readonly]),textarea:not([readonly])'); if (f) setTimeout(() => f.focus(), 30); }
-function close() { if (!openModal) return; $(openModal).classList.add('hidden'); $('backdrop').classList.add('hidden'); openModal = null; S.hotkeyListening = false; $('setHotkey').classList.remove('listening'); $('setModeHotkey').classList.remove('listening'); $('setFullHotkey').classList.remove('listening'); $('input').focus(); }
+// A share prompt (control, share back, the audience picker) can have another modal opened over it, Settings by its
+// shortcut. When that one closes the prompt is still on screen: it is the open modal again and the backdrop stays,
+// so that it is not left as a loose box that Esc and a click beside it no longer reach.
+const SHARE_PROMPTS = ['mControl', 'mShareBack', 'mCast'];
+function close() {
+  if (!openModal) return;
+  $(openModal).classList.add('hidden'); S.hotkeyListening = false; $('setHotkey').classList.remove('listening'); $('setModeHotkey').classList.remove('listening'); $('setFullHotkey').classList.remove('listening');
+  const under = SHARE_PROMPTS.find((id) => !$(id).classList.contains('hidden'));
+  if (under) { openModal = under; if (window.Share) window.Share.onShown(); return; }   // in view again: its Yes is disarmed anew
+  $('backdrop').classList.add('hidden'); openModal = null; $('input').focus();
+}
 window.closeModal = close; // share.js has its own close(); it reaches the modal one through this name
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = close));
 $('backdrop').onclick = close;
