@@ -209,5 +209,29 @@ const DISPLAY = { id: 1 };
     ok(`V5 ${role}: the link stopped between the marker check and the read: no read follows, nothing is sent`, calls >= 2 && m.clip.status().on === false && m.reads === reads5 && m.texts.length === 0);
   }
 
+  // V6: a marked text is not read as the baseline of a new link either; a clipboard that cannot be asked about its markers counts as marked (review of stage D, LOW 3)
+  for (const role of ['give', 'take']) {
+    m = machine(); m.text = 'PASSWORD AT THE START'; m.marks.add(MARK); tok = role === 'give' ? await m.allow('bob', true) : null;
+    r = await m.clip.start({ pub: 'bob', role, token: tok });
+    const look = async () => { if (role === 'give') await fire(); else { m.clip.poke(r.id); await settle(); } };
+    ok(`V6 ${role}: a marked text on the clipboard when the link starts: the link starts and the text is not read`, r.ok === true && m.reads === 0 && m.clip.status().on === true);
+    await look(); await look();
+    ok(`V6 ${role}: nor on the looks after it`, m.reads === 0 && m.texts.length === 0);
+    m.marks.clear(); m.text = 'plain'; await look();
+    ok(`V6 ${role}: the plain copy made after it is sent`, m.texts.join() === `${r.id}:plain`);
+    m.clip.stop('test');
+  }
+  m = machine(); m.text = 'cannot tell'; tok = await m.allow('bob', true);
+  const has6 = m.backend.has; m.backend.has = async () => { throw new Error('no formats'); };
+  r = await m.clip.start({ pub: 'bob', role: 'give', token: tok });
+  m.text = 'a copy while the markers cannot be asked about'; await fire(); await fire();
+  ok('V6 the marker question throws: it counts as marked, nothing is read and nothing is sent', r.ok === true && m.reads === 0 && m.texts.length === 0);
+  ok('V6 a text of the peer is written there, and not read back', (await m.clip.apply(r.id, 'from the peer')) === true && m.text === 'from the peer' && m.reads === 0);
+  await fire();
+  ok('V6 and not sent back on the next look', m.texts.length === 0);
+  m.backend.has = has6; await fire(); m.text = 'asked again'; await fire();
+  ok('V6 once the question is answered again, a new copy is sent', m.texts.join() === `${r.id}:asked again`);
+  m.clip.stop('test');
+
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.log('FAIL  harness threw:', e.stack); process.exit(1); });

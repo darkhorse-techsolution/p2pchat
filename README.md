@@ -378,6 +378,8 @@ Windows device names (`NUL`, `COM1`…) as blob file names, a macOS permission g
   whether macOS shows a notice of its own for such reads has not been checked on a real clipboard. The app asks the
   system for the marks password managers put on what they copy and skips a copy that carries one, but whether each
   system shows those marks to the app is untested: treat everything copied while the clipboard is shared as sent.
+  Where a system refuses that question outright, the app takes the clipboard for marked and sends nothing from
+  that machine.
   A text already on its way when control ends can still arrive.
 - **Remote control under a remote-desktop host:** tools that block local input on the shared computer (Jump
   Desktop Connect's privacy mode, for one) do it with a filtering event tap at the HID point of the event stream.
