@@ -7,7 +7,8 @@
 // and K.control.isTaking at call time.
 (() => {
   const K = window.ShareKit;
-  const taking = () => (K.control.isTaking() ? K.viewer.bound : null);   // the session whose screen I drive right now, or null
+  // K.control is set by a later script: a window blur between two script loads finds none yet
+  const taking = () => (K.control && K.control.isTaking() ? K.viewer.bound : null);   // the session whose screen I drive right now, or null
 
   // --- the video and the sound ---------------------------------------------------------------
   // First thing in every paint: which session the one <video> shows (K.viewer.bound: the session of the
