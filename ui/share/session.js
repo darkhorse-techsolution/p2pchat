@@ -16,6 +16,29 @@
   // names, and two peers that start at the same moment keep a sid each.
   const map = new Map();
 
+  // A frame can still be on its way when its session ends here: the sharer's `state` while the viewer
+  // presses End, an answer while Stop and Share are clicked in a row. Taken for a new one it opens a
+  // session nobody is behind ("Connecting" for 30 s, then "did not connect"), or lands in the session
+  // opened next. So the sids of a session that closed here are kept per contact for as long as the
+  // connect watchdog would wait, and a frame that carries one of them is dropped. A registry build
+  // never uses a sid again, so any frame with `v` and a kept sid is a leftover. A released peer (no
+  // `v`) answers by contact, not by sid: if its side outlived a close it was not told about, it goes
+  // on under the old sid, also toward a session opened next. Its frames are dropped only after a
+  // close that a bye went with, either way: then its side is gone as well.
+  const gone = new Map();   // pub -> Map(sid -> { until, bye })
+  function remember(sess, why) {
+    const now = Date.now(), kept = gone.get(sess.pub) || new Map(), bye = ['ended', 'timeout', 'bye', 'refused'].includes(why);
+    for (const [sid, g] of kept) if (g.until <= now) kept.delete(sid);
+    for (const sid of [sess.id, ...sess.peerSids]) kept.set(sid, { until: now + K.CONNECT_MS, bye });
+    gone.set(sess.pub, kept);
+  }
+  function leftover(ev) {
+    const kept = gone.get(ev.pub), g = kept && kept.get(ev.sid);
+    if (!g) return false;
+    if (g.until <= Date.now()) { kept.delete(ev.sid); if (!kept.size) gone.delete(ev.pub); return false; }
+    return g.bye || Number.isInteger(ev.v);
+  }
+
   // Synchronous: the slot is taken in the task that decides to open it, so two frames, or a frame and
   // a click, never open two sessions with one contact. The peer connection needs the ICE servers from
   // main and follows behind `ready`; frames that arrive before it wait in the inbox.
@@ -128,6 +151,7 @@
     if (sess.closed) return;
     sess.closed = true;                 // first: everything that was waiting on this session checks it and stops
     if (map.get(sess.pub) === sess) map.delete(sess.pub);
+    remember(sess, why);
     clearInterval(sess.statsTimer); clearTimeout(sess.connectTimer);
     sess.markSeen();
     // every part of the share code lets go of the session, in this order
@@ -147,6 +171,7 @@
   // --- their side ---------------------------------------------------------------------
   // Routing is synchronous and in arrival order; the work behind it runs one frame at a time per session.
   function onFrame(ev) {
+    if (leftover(ev)) return;
     let sess = map.get(ev.pub);
     if (ev.op === 'bye') {
       // only for this session: a late bye of an earlier one carries a sid this one has never seen
