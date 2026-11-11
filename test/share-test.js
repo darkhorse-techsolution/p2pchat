@@ -126,6 +126,27 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   ok('A1 a viewer keeps the count it is told only when it is a whole number from 0 to 16', three === 3 && top === 16 && bad.every((n) => n === 0) && paints === 9);
 }
 
+// L1: the capture stops with its last lease, also when that lease goes while a microphone is being started
+{
+  let answerMic = null, ended = 0;
+  const made = [], track = (kind) => { const t = { kind, enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; }, clone: () => track(kind), applyConstraints: async () => {} }; made.push(t); return t; };
+  const K = load(['kit.js', 'tune.js', 'cast.js'], { toast() {}, renderContacts() {},
+    navigator: { mediaDevices: { getDisplayMedia: async () => ({ getVideoTracks: () => [track('video')] }), getUserMedia: () => new Promise((res) => { answerMic = () => res({ getAudioTracks: () => [track('audio')] }); }) } },
+    api: { screenPermission: async () => 'ok', micPermission: async () => true, captureEnded: async () => { ended++; return true; } } });
+  K.paint = () => {}; K.sessions = { sendState() {}, all: () => [] }; K.control = { owner: null };
+  (async () => {
+    const sess = { pub: 'b', closed: false, ready: Promise.resolve(), screenTrack: null, micTrack: null };
+    const live = await K.capture.acquire();
+    sess.screenTrack = K.capture.lease(sess);
+    const talking = K.cast.talk(sess);                       // the microphone button: its start waits on the device
+    await new Promise((r) => setTimeout(r, 5));
+    K.capture.release(sess); sess.screenTrack = null; sess.closed = true; K.capture.settle();   // the share ends meanwhile
+    ok('L1 a capture whose last lease went during a microphone start is not stopped under that call', live === true && K.cast.adding === 1 && K.capture.state === 'live' && K.capture.leases.size === 0);
+    answerMic(); await talking;
+    ok('L1 and is stopped when the call ends: no device left on, main told once', K.cast.adding === 0 && K.capture.state === 'idle' && K.mic.state === 'idle' && ended === 1 && made.length === 3 && made.every((t) => t.readyState === 'ended'));
+  })().catch((e) => { console.log('FAIL  L1 threw:', e.stack); process.exitCode = 1; });
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');

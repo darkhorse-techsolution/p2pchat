@@ -182,7 +182,7 @@
         if (sess.closed) return;
         if (got && K.tune.SPLIT_MIC) { await sess.peerSeen; if (sess.closed) return; }
         if (got && !sess.micTrack) attachMic(sess);           // a second click waited on the same start and finds it attached
-      } finally { cast.adding--; mic.settle(); }
+      } finally { cast.adding--; capture.settle(); mic.settle(); }   // both: a share that ended while this call was in flight left its capture for it to stop
       K.sessions.sendState(sess);
     } else if (sess.screenTrack) {
       mic.audienceOn = !mic.audienceOn;
