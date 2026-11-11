@@ -4,7 +4,7 @@
 // needs from it sits on window.ShareKit (K) and is looked up there at call time, so the order of
 // the script tags only matters for what runs while a file loads.
 //
-// Reads from app.js: $, S, contact, show, closeLightbox, window.closeModal. Reads K.viewer at call time.
+// Reads from app.js: $, S, contact, show, closeLightbox, openModal, window.closeModal. Reads K.viewer at call time.
 (() => {
   const K = window.ShareKit = {};
   K.PROTO = 2;             // sent as `v` on every share frame; a peer that sends none is 0.7.1 or older
@@ -28,6 +28,8 @@
     if (!$('backdrop').classList.contains('hidden')) window.closeModal();
     show(id);
   };
-  // closes its own modal only: another one that is open by now is not this prompt's to close
-  K.unprompt = (id) => { if (!$(id).classList.contains('hidden')) window.closeModal(); };
+  // Closes its own modal only. The app closes "the open modal", which is the one shown last: when
+  // another was opened on top of this prompt (Settings by its shortcut), that one stays and the
+  // prompt alone is taken off the screen.
+  K.unprompt = (id) => { if ($(id).classList.contains('hidden')) return; if (openModal === id) window.closeModal(); else $(id).classList.add('hidden'); };
 })();

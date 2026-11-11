@@ -5,7 +5,7 @@
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const ok = (n, v) => { console.log((v ? 'PASS' : 'FAIL').padEnd(5), n); if (!v) process.exitCode = 1; };
 function load(files, globals = {}) {
-  const ctx = vm.createContext({ console, setTimeout, clearTimeout, ...globals });
+  const ctx = vm.createContext(Object.defineProperties({ console, setTimeout, clearTimeout }, Object.getOwnPropertyDescriptors(globals)));   // a getter stays a getter
   ctx.window = ctx;
   for (const f of files) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'ui', 'share', f), 'utf8'), ctx, { filename: f });
   return ctx.ShareKit;
@@ -214,6 +214,20 @@ const tick = () => new Promise((r) => setImmediate(r));
   w.from(bob, { t: 'req' }); const afterExpiry = w.dialogs.length;
   w.now += w.K.DENY_COOLDOWN_MS + 1; w.from(bob, { t: 'req' });
   ok('R4 a request that ran out is told so, and asking again is held off for the cooldown as well', w.sent[0] === 'bob:{"t":"ctl","on":false,"why":"expired"}' && afterExpiry === 2 && w.dialogs.length === 3);
+}
+
+// R5: a prompt closes its own modal, also when another one was opened on top of it
+{
+  const st = { open: null, hidden: new Set(['mSettings', 'mControl', 'backdrop']), closes: 0 };
+  const K = load(['kit.js'], { $: (id) => ({ classList: { contains: (c) => c === 'hidden' && st.hidden.has(id), add: () => st.hidden.add(id) } }), get openModal() { return st.open; },
+    closeModal: () => { st.closes++; st.hidden.add(st.open); st.hidden.add('backdrop'); st.open = null; } });   // as ui/app.js closes "the open modal"
+  const show = (id) => { st.open = id; st.hidden.delete(id); st.hidden.delete('backdrop'); };
+  show('mControl'); K.unprompt('mControl');
+  ok('R5 a prompt that is the open modal is closed the way the app closes one', st.closes === 1 && st.hidden.has('mControl') && st.hidden.has('backdrop') && st.open === null);
+  show('mControl'); show('mSettings'); K.unprompt('mControl');
+  ok('R5 with another modal opened over it only the prompt goes: that modal and the backdrop stay', st.closes === 1 && st.hidden.has('mControl') && !st.hidden.has('mSettings') && !st.hidden.has('backdrop') && st.open === 'mSettings');
+  K.unprompt('mControl');
+  ok('R5 a prompt that is not on screen closes nothing', st.closes === 1 && st.open === 'mSettings' && !st.hidden.has('mSettings'));
 }
 
 // P1: one pop-up per incoming share, per contact
