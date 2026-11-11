@@ -14,6 +14,7 @@
   const MOVE_BUF = 1024;              // bytes queued on the move channel: SCTP has not drained for about 30 moves, the path is stalled, drop rather than replay
   const ASK_MS = 45000;               // a control request with no answer expires
   const SPLIT_MIC = false;            // the microphone on a MediaStream of its own: released peers (0.7.1) read both tracks from one, so off
+  const MAX_AUDIENCE = 1;             // contacts that get my screen at once, from the one capture
   const MOVE_EV = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';   // raw: not held to the next frame
 
   // The viewer plays what arrives as soon as it arrives: no jitter-buffer cushion for a share
@@ -65,7 +66,7 @@
   }
 
   K.tune = {
-    MAX_W, MAX_H, FPS, VIDEO_KBPS, MOVE_MS, MOVE_BUF, ASK_MS, SPLIT_MIC, MOVE_EV,
+    MAX_W, MAX_H, FPS, VIDEO_KBPS, MOVE_MS, MOVE_BUF, ASK_MS, SPLIT_MIC, MAX_AUDIENCE, MOVE_EV,
     displayConstraints: () => ({ video: { frameRate: { ideal: FPS, max: FPS } }, audio: false }),
     capture: async (track) => { try { await track.applyConstraints({ width: { max: MAX_W }, height: { max: MAX_H }, frameRate: { ideal: FPS, max: FPS } }); } catch {} },
     micConstraints: () => ({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }),

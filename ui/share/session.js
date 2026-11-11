@@ -6,8 +6,7 @@
 // stream or on two.
 //
 // Reads from app.js: S, toast, contact, ipcErr, renderContacts. Reads at call time: K.tune, K.paint,
-// K.paintStats, K.viewer, K.rec, and K.control and K.cast (both in ui/share.js until they have files of
-// their own).
+// K.paintStats, K.viewer, K.rec, K.cast, and K.control (in ui/share.js until it has a file of its own).
 (() => {
   const K = window.ShareKit;
   const newSid = () => Math.random().toString(36).slice(2, 12);
@@ -26,7 +25,7 @@
     if (map.size >= K.MAX_SESSIONS) return null;
     let markSeen;
     const sess = { pub, id: sid || newSid(), pc: null, polite: S.me.pub < pub, makingOffer: false, ignoreOffer: false, settingAnswer: false,
-      local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null,
+      local: new MediaStream(), screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null,
       remote: { video: null, audio: null, view: null, audioEl: null, screen: false, mic: false, mode: 'one', rec: false }, mode: 'one', rec: null, recStarting: false, recWanted: !!S.settings.recordShares, askedBack: false, muted: false, stats: '', path: '', statsTimer: null, since: Date.now(),
       closed: false, ready: null, inbox: Promise.resolve(), peerSids: new Set(), seen: false, ver: 0, peerSeen: new Promise((r) => { markSeen = r; }), markSeen, everConnected: false, connectTimer: null,
       ctl: { give: 'off', take: false, asked: false, askTimer: null, dc: null, mv: null, chans: [], move: null, moveAt: 0, flush: null, sent: 0, recv: 0, cursor: null } };

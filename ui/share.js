@@ -19,92 +19,19 @@
 // sharer's app hands them to the main process, which posts them to the OS (main/input.js).
 // Only a whole display is ever shared, so coordinates are fractions of that display.
 //
-// This file is the last share script and holds what is left: my outgoing screen and microphone and
-// remote control (until share/cast.js and share/control.js exist), the paint of the header and the
-// viewer bar, the buttons, the debug surface and window.Share. The sessions are in share/session.js,
-// recording in share/record.js, the video, full screen and the pointer and key listeners in
-// share/viewer.js; share/kit.js has the namespace (K) and share/tune.js every latency and quality value.
+// This file is the last share script and holds what is left: remote control (until share/control.js
+// exists), the paint of the header and the viewer bar, the buttons, the debug surface and window.Share.
+// The sessions are in share/session.js, my outgoing screen and microphone in share/cast.js, recording in
+// share/record.js, the video, full screen and the pointer and key listeners in share/viewer.js;
+// share/kit.js has the namespace (K) and share/tune.js every latency and quality value.
 //
-// Reads from app.js: S, $, toast, contact, ipcErr, renderContacts, show.
+// Reads from app.js: S, $, toast, contact, ipcErr, show.
 (() => {
   const K = window.ShareKit;
   const map = K.sessions.map;
   const cur = () => map.get(S.current) || null;                                             // the session of the open chat
   const pick = (pub) => map.get(pub) || cur() || map.values().next().value || null;         // ... else the oldest
   const giving = (state) => [...map.values()].find((x) => x.ctl.give === state) || null;    // the session that asked for ('asked') or has ('on') control of my screen
-
-  // --- my side ---------------------------------------------------------------------
-  async function start(pub, mode) {
-    const c = contact(pub);
-    if (!c) return;
-    if (c.status !== 'online') { toast(`${c.name} is offline: a screen share needs them connected`, 'err'); return; }
-    const busy = () => { const o = [...map.values()].find((x) => x.pub !== pub); if (o) toast(`End the share with ${contact(o.pub)?.name || 'the other contact'} first`, 'err'); return !!o; };
-    if (busy()) return;
-    const perm = await window.api.screenPermission();   // macOS: ask before trying, with instructions instead of a capture error
-    if (perm !== 'ok') { window.showScreenPermission(perm); return; }
-    if (busy()) return;                                     // someone else's share arrived while macOS was asked
-    const sess = K.sessions.open(pub, null, false);         // the session with this contact if there is one; never null right after busy()
-    await sess.ready;
-    if (sess.closed) return;
-    sess.mode = mode || sess.mode;
-    if (sess.screenTrack) return;
-    let screen;
-    try { screen = await navigator.mediaDevices.getDisplayMedia(K.tune.displayConstraints()); }
-    catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); if (!sess.remote.screen && !sess.remote.mic) K.sessions.close(sess, 'capture'); return; }
-    const track = screen.getVideoTracks()[0];
-    // The session ended while the capture was starting, or a second click got its capture in first:
-    // a track the session does not hold is one nothing would ever stop.
-    if (sess.closed || sess.screenTrack) { track.stop(); return; }
-    track.contentHint = K.tune.hint(sess.ctl.give === 'on');
-    await K.tune.capture(track);
-    if (sess.closed || sess.screenTrack) { track.stop(); return; }
-    track.onended = () => { if (!sess.closed && sess.screenTrack === track) stopSharing(sess); }; // the OS ended the capture
-    sess.screenTrack = track; sess.local.addTrack(track);
-    K.sessions.openChannels(sess);                          // in the same task as addTrack: one negotiation covers both
-    sess.screenSender = sess.pc.addTrack(track, K.tune.streamFor(sess, 'video'));
-    K.tune.codecs(sess.pc, sess.screenSender);
-    await K.tune.sender(sess);
-    if (sess.closed) return;                                // close() stopped the track it found on the session
-    await addMic(sess, true);
-    if (sess.closed) return;
-    K.sessions.sendState(sess); render(); renderContacts();
-  }
-
-  async function addMic(sess, quiet) {
-    if (sess.micTrack) return true;
-    const allowed = await window.api.micPermission();
-    if (sess.closed) return false;
-    if (!allowed) { if (!quiet) toast('Microphone access was not allowed; sharing without sound', 'err'); return false; }
-    try {
-      const mic = await navigator.mediaDevices.getUserMedia(K.tune.micConstraints());
-      const t = mic.getAudioTracks()[0];
-      if (sess.closed || sess.micTrack) { t.stop(); return !!sess.micTrack; }   // closed meanwhile, or an overlapping call attached its microphone first: this one would stay open for good
-      sess.micTrack = t; sess.local.addTrack(t); sess.micSender = sess.pc.addTrack(t, K.tune.streamFor(sess, 'audio'));
-      return true;
-    } catch (e) { if (!quiet) toast(`Microphone: ${e.message}`, 'err'); return false; }
-  }
-
-  function dropTrack(sess, which) {
-    const t = sess[which + 'Track'], snd = sess[which + 'Sender'];
-    if (snd) { try { sess.pc.removeTrack(snd); } catch {} }
-    if (t) { t.stop(); sess.local.removeTrack(t); }
-    sess[which + 'Track'] = null; sess[which + 'Sender'] = null;
-  }
-
-  function stopSharing(sess) {
-    if (sess.ctl.give !== 'off') giveUp(sess, 'stopped');
-    dropTrack(sess, 'screen'); dropTrack(sess, 'mic');
-    K.sessions.sendState(sess);
-    if (!sess.remote.screen && !sess.remote.mic) K.sessions.close(sess, 'stopped'); else { render(); renderContacts(); }
-  }
-
-  async function toggleMic(sess) {
-    if (sess.micTrack) { sess.micTrack.enabled = !sess.micTrack.enabled; }
-    else { await sess.ready; if (!sess.closed) await addMic(sess, false); }
-    if (sess.closed) return;
-    K.sessions.sendState(sess); render();
-  }
-  K.cast = { sessionClosed: (sess) => { dropTrack(sess, 'screen'); dropTrack(sess, 'mic'); } };   // all of share/cast.js that another share file calls so far
 
   // --- remote control ----------------------------------------------------------------
   function onCtl(sess, data) {
@@ -213,7 +140,7 @@
     clearTimeout(sess.ctl.flush); clearTimeout(sess.ctl.askTimer);
     if (!$('mControl').classList.contains('hidden')) window.closeModal();
   }
-  K.control = { onData: onCtl, stopTaking, isTaking: () => !!taking(), sessionClosed: controlClosed };   // what the other share files call, until share/control.js exists
+  K.control = { onData: onCtl, stopTaking, isTaking: () => !!taking(), sessionClosed: controlClosed, endGive: (sess, why) => { if (sess.ctl.give !== 'off') giveUp(sess, why); } };   // what the other share files call, until share/control.js exists
 
   function onSettings() { for (const sess of map.values()) { sess.recWanted = !!S.settings.recordShares; K.rec.sync(sess); if (S.current === sess.pub) K.rec.paint(sess); } }
 
@@ -245,18 +172,18 @@
   K.paint = render;
   K.paintStats = (sess) => { if (K.viewer.bound === sess) $('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
 
-  $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if (sess && sess.screenTrack) stopSharing(sess); else start(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
+  $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if (sess && sess.screenTrack) K.cast.remove(S.current); else K.cast.add(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
   $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
   $('shareMenu').querySelectorAll('button').forEach((b) => (b.onclick = async () => { $('shareMenu').classList.add('hidden'); S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.mode); render(); toast(b.dataset.mode === 'two' ? 'Two way: your contact will be asked to share their screen too' : 'One way: only your screen is sent', 'ok'); }));
   document.addEventListener('click', () => $('shareMenu').classList.add('hidden'));
-  $('btnMic').onclick = () => { const sess = cur(); if (sess) toggleMic(sess); };
-  $('viewerTalk').onclick = () => { const sess = cur(); if (sess) toggleMic(sess); };
+  $('btnMic').onclick = () => { const sess = cur(); if (sess) K.cast.talk(sess); };
+  $('viewerTalk').onclick = () => { const sess = cur(); if (sess) K.cast.talk(sess); };
   $('viewerMute').onclick = () => { const sess = K.viewer.bound; if (!sess) return; sess.muted = !sess.muted; if (sess.remote.audioEl) sess.remote.audioEl.muted = sess.muted; render(); };
-  $('viewerShareBack').onclick = () => { const sess = cur(); if (sess) start(sess.pub, 'two'); };
+  $('viewerShareBack').onclick = () => { const sess = K.viewer.bound; if (sess) K.cast.add(sess.pub, 'two'); };
   $('viewerRec').onclick = () => { const sess = cur(); if (sess) K.rec.toggle(sess); };
   $('viewerEnd').onclick = () => { const sess = cur(); if (sess) K.sessions.end(sess); };
   // the prompt belongs to the session that asked: Yes shares with that contact or with nobody
-  $('shareBackYes').onclick = () => { window.closeModal(); const sess = K.viewer.backFor; K.viewer.backFor = null; if (sess && !sess.closed) start(sess.pub, 'two'); };
+  $('shareBackYes').onclick = () => { window.closeModal(); const sess = K.viewer.backFor; K.viewer.backFor = null; if (sess && !sess.closed) K.cast.add(sess.pub, 'two'); };
   $('shareBackNo').onclick = () => window.closeModal();
   // remote control: the viewer's input on the video goes to their machine while it is on
   $('viewerCtl').onclick = () => { const sess = cur(); if (sess) askControl(sess); };
@@ -269,7 +196,9 @@
   const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, in: { video: !!x.remote.video, audio: !!x.remote.audio }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
     enc: x.screenSender ? x.screenSender.getParameters().encodings[0] || null : null,
     ctl: { give: x.ctl.give, take: x.ctl.take, asked: x.ctl.asked, sent: x.ctl.sent, recv: x.ctl.recv, chans: x.ctl.chans.map((c) => `${c.label}:${c.readyState}`) } } : null; };
-  const debugAll = () => ({ sessions: Object.fromEntries([...map.values()].map((x) => [x.pub.slice(0, 8), debug(x.pub)])) });
+  const debugAll = () => ({ sessions: Object.fromEntries([...map.values()].map((x) => [x.pub.slice(0, 8), debug(x.pub)])),
+    capture: { state: K.capture.state, leases: K.capture.leases.size }, mic: { state: K.mic.state, leases: K.mic.leases.size, audienceOn: K.mic.audienceOn },
+    cast: { members: Object.fromEntries([...K.cast.members].map(([pub, m]) => [pub.slice(0, 8), m.state])) } });
   async function audio() {
     const sess = pick();
     if (!sess || !sess.pc) return null;

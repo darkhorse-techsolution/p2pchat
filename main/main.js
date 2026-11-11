@@ -479,6 +479,8 @@ handle('controlGrant', () => {
   return control.start(d);
 });
 handle('controlRevoke', () => { control.stop('revoked'); return true; });
+// The renderer stopped its capture: no display is shared any more, so none can be controlled.
+handle('captureEnded', () => { sharedDisplay = null; control.stop('capture ended'); return true; });
 ipcMain.on('input', (e, ev) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; control.event(ev); });
 // Recording an incoming share: the renderer's MediaRecorder streams WebM pieces here and they
 // are appended, in order, to a plain file in the Videos folder. Deliberately not in the vault:
