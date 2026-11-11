@@ -44,9 +44,10 @@
 
   // One capture, several viewers: every viewer is an encoder of its own, so from the third on each gets
   // less. Up to two get the one-to-one values. The viewer who drives the screen keeps the full frame
-  // rate, whatever the audience: the pointer has to feel live there.
+  // rate, whatever the audience: the pointer has to feel live there. Three get 15 fps like four, not 20:
+  // capped at 20 the encoder kept only 10 to 12 of the capture's 30 frames (measured), at 15 it keeps 15.
   function tier(n, controlled) {
-    const t = n <= 2 ? { kbps: VIDEO_KBPS, fps: FPS, maxW: MAX_W } : n === 3 ? { kbps: 5000, fps: 20, maxW: 1920 } : { kbps: 4000, fps: 15, maxW: 1920 };
+    const t = n <= 2 ? { kbps: VIDEO_KBPS, fps: FPS, maxW: MAX_W } : n === 3 ? { kbps: 5000, fps: 15, maxW: 1920 } : { kbps: 4000, fps: 15, maxW: 1920 };
     if (controlled) { t.fps = FPS; t.kbps = Math.max(t.kbps, 5000); }
     return t;
   }

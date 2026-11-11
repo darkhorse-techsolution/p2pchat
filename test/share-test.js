@@ -45,7 +45,7 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   ok('T1 the caps: six sessions, four contacts get my screen', K.MAX_SESSIONS === 6 && t.MAX_AUDIENCE === 4);
   ok('T1 one viewer and two get the one-to-one values', js(t.tier(1, false)) === '{"kbps":8000,"fps":30,"maxW":2560}' && js(t.tier(2, false)) === js(t.tier(1, false)));
   ok('T1 and their encoder object is the one a single share always had', js(t.encoding(t.tier(1, false))) === '{"maxBitrate":8000000,"maxFramerate":30}' && js(t.encoding(t.tier(2, false))) === '{"maxBitrate":8000000,"maxFramerate":30}');
-  ok('T1 three viewers: 5 Mb/s, 20 fps, 1920 wide', js(t.tier(3, false)) === '{"kbps":5000,"fps":20,"maxW":1920}');
+  ok('T1 three viewers: 5 Mb/s, 15 fps, 1920 wide', js(t.tier(3, false)) === '{"kbps":5000,"fps":15,"maxW":1920}');
   ok('T1 four and more: 4 Mb/s, 15 fps, 1920 wide', js(t.tier(4, false)) === '{"kbps":4000,"fps":15,"maxW":1920}' && js(t.tier(6, false)) === js(t.tier(4, false)));
   ok('T1 the viewer who controls keeps 30 fps and at least 5 Mb/s', js(t.tier(4, true)) === '{"kbps":5000,"fps":30,"maxW":1920}' && js(t.tier(3, true)) === '{"kbps":5000,"fps":30,"maxW":1920}' && js(t.tier(1, true)) === js(t.tier(1, false)));
   // a session as tune.sender sees it: the clone's width, and a sender that records what it is given
@@ -56,17 +56,17 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
     ok('T1 sender: a one-viewer share gets exactly the two values, in the parameters it read', await run(a, t.tier(1, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30}]}' && a.scaled === false);
     ok('T1 sender: a clone as wide as the tier allows is not scaled', await run(a, t.tier(4, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":4000000,"maxFramerate":15}]}' && a.scaled === false);
     const b = fake(2560);
-    ok('T1 sender: a wider one is scaled down to the tier, by its own width', await run(b, t.tier(3, false)) === `{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":20,"scaleResolutionDownBy":${2560 / 1920}}]}` && b.scaled === true);
+    ok('T1 sender: a wider one is scaled down to the tier, by its own width', await run(b, t.tier(3, false)) === `{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":15,"scaleResolutionDownBy":${2560 / 1920}}]}` && b.scaled === true);
     ok('T1 sender: back at two viewers the scaling is taken off again (the key stays, at 1)', await run(b, t.tier(2, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":8000000,"maxFramerate":30,"scaleResolutionDownBy":1}]}');
     b.width = 3840;
-    ok('T1 sender: the width is read again on every call', await run(b, t.tier(3, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":20,"scaleResolutionDownBy":2}]}');
+    ok('T1 sender: the width is read again on every call', await run(b, t.tier(3, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":15,"scaleResolutionDownBy":2}]}');
     const c = fake(1920); let refused = 0; c.screenSender.setParameters = async () => { refused++; throw new Error('refused'); };
     let threw = false; try { await run(c, t.tier(1, false)); } catch { threw = true; }
     const d = fake(1920); d.screenSender = null; await run(d, t.tier(1, false));
     ok('T1 sender: a set that keeps being refused is given up after three tries and not thrown on; a session without a screen sender is left alone', threw === false && refused === 3 && d.set.length === 0);
     const e = fake(1920), take = e.screenSender.setParameters; let asked = 0;
     e.screenSender.setParameters = async (p) => { if (++asked === 1) throw new Error('modified RTCP parameters'); return take(p); };   // a negotiation changed them underneath, once
-    ok('T1 sender: a set refused once is read and set again', await run(e, t.tier(3, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":20}]}' && asked === 2 && e.set.length === 1);
+    ok('T1 sender: a set refused once is read and set again', await run(e, t.tier(3, false)) === '{"transactionId":"tx","encodings":[{"maxBitrate":5000000,"maxFramerate":15}]}' && asked === 2 && e.set.length === 1);
     const f = fake(1920), waiting = []; f.screenTrack.w = () => 1920;
     f.screenSender.setParameters = (p) => new Promise((res, rej) => waiting.push({ p: js(p), res, rej }));
     const older = t.sender(f, t.tier(4, false)), newer = t.sender(f, t.tier(2, false));

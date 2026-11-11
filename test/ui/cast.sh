@@ -223,7 +223,7 @@ AUDIENCE "'$PUBB','$PUBC'"; NEED_CAPTURE "step 5"
 CHECK "5 two viewers: the one-to-one values each" '["8M/30","8M/30"]' "$(A "$CAPSQ")"
 READ "2 viewers:" B C
 AUDIENCE "'$PUBB','$PUBC','$PUBD'"
-CHECK "5 three viewers" '["5M/20","5M/20","5M/20"]' "$(A "$CAPSQ")"
+CHECK "5 three viewers" '["5M/15","5M/15","5M/15"]' "$(A "$CAPSQ")"
 READ "3 viewers:" B C D
 AUDIENCE "'$PUBB','$PUBC','$PUBD','$PUBE'"
 CHECK "5 four viewers" '["4M/15","4M/15","4M/15","4M/15"]' "$(A "$CAPSQ")"
