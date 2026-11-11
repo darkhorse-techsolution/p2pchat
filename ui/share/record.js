@@ -21,7 +21,9 @@
     let id, file;
     try {
       ({ id, file } = await window.api.recordStart(sess.pub));
-      if (sess.closed) { window.api.recordStop(id).catch(() => {}); return; }   // the share ended while the file was being created: main removes the empty file
+      // While the file was being created the share ended, their screen went off or the recording was
+      // switched off: a recorder started now would run on with nothing to stop it. Main removes the empty file.
+      if (sess.closed || !sess.recWanted || !recReady(sess)) { window.api.recordStop(id).catch(() => {}); return; }
       const stream = new MediaStream([sess.remote.video, sess.remote.audio].filter(Boolean));   // a snapshot: tracks added later never disturb the recorder
       const recorder = new MediaRecorder(stream, { mimeType: REC_MIME, videoBitsPerSecond: 4_000_000, audioBitsPerSecond: 96_000 });
       const rec = { id, file, recorder, since: Date.now(), bytes: 0, q: Promise.resolve(), timer: null, failed: '' };
