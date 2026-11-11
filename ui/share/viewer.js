@@ -73,8 +73,10 @@
     on = on === undefined ? !K.viewer.theater : !!on;
     if (on && !K.viewer.bound) return;
     if (on === K.viewer.theater) return;
+    if (!on) applyTheater(false);                          // off shows at once: what opens next (a prompt) must not sit under the viewer while main answers
     let got = false; try { got = await window.api.fullscreen(on); } catch (e) { toast(ipcErr(e), 'err'); }
     applyTheater(!!got);
+    if (K.viewer.theater && !K.viewer.bound) setFull(false);   // the share ended while main was switching: nothing is left to fill the screen
   }
   function onFullscreen(ev) { applyTheater(!!ev.on && !!K.viewer.bound); }
 
