@@ -89,8 +89,8 @@
     if (C.owner !== own || sess.closed || !sess.screenTrack) {
       if (r && r.ok) window.api.controlRevoke(r.token).catch(() => {});
       if (C.owner === own) C.owner = null;
-      ctl.give = 'off';
-      if (!sess.closed) dc(sess, { t: 'ctl', on: false, why: 'notsharing' });
+      // unless the same contact let go and asked anew meanwhile: that request has its own dialog open, and this grant is not its answer
+      if (!(C.pending && C.pending.sess === sess)) { ctl.give = 'off'; if (!sess.closed) dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); }
       K.paint(); return;
     }
     if (r && r.ok) {

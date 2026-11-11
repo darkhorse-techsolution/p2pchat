@@ -167,6 +167,40 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   })().catch((e) => { console.log('FAIL  L2 threw:', e.stack); process.exitCode = 1; });
 }
 
+// The control code (share/control.js) in a world that records what it sends, shows and asks main for.
+// Time and timers are the test's: `now` is what Date.now() gives, a timer runs only when the test fires it.
+function controlWorld() {
+  const w = { now: 1e12, sent: [], toasts: [], dialogs: [], grants: [], revoked: [], timers: [] };
+  w.K = load(['kit.js', 'tune.js', 'control.js'], { toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), contact: (pub) => ({ pub, name: pub[0].toUpperCase() + pub.slice(1) }),
+    Date: { now: () => w.now }, setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; w.timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; },
+    api: { controlGrant: (pub) => new Promise((res) => w.grants.push({ pub, res })), controlRevoke: async (token) => { w.revoked.push(token); return true; }, input() {} } });
+  w.K.sessions = { dc: (sess, _label, msg) => { w.sent.push(`${sess.pub}:${JSON.stringify(msg)}`); return true; } };
+  w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess) => w.dialogs.push(sess.pub) };
+  w.K.cast = { retier() {} }; w.K.paint = () => {}; w.K.unprompt = () => {};
+  w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null, deniedAt: 0 } });
+  w.from = (sess, msg) => w.K.control.onMessage(sess, msg);       // a message of theirs, as the session hands it on
+  return w;
+}
+const tick = () => new Promise((r) => setImmediate(r));
+
+// R3: a grant that comes back for a request that was withdrawn does not answer the request made after it
+{
+  (async () => {
+    const w = controlWorld(), C = w.K.control, bob = w.sess('bob');
+    w.from(bob, { t: 'req' }); C.allow(); await tick();
+    w.from(bob, { t: 'rel' }); w.from(bob, { t: 'req' });       // lets go while main starts the grant, asks anew: a second dialog
+    const open = C.pending && C.pending.sess === bob && bob.ctl.give === 'asked' && w.dialogs.length === 2;
+    w.sent.length = 0; w.grants[0].res({ ok: true, token: 'stale' }); await tick();
+    ok('R3 the stale grant is handed back, and the open request stays asked with nothing said to the viewer', open && w.revoked.join() === 'stale' && C.owner === null && C.pending && C.pending.sess === bob && bob.ctl.give === 'asked' && w.sent.length === 0);
+    C.allow(); await tick(); w.grants[1].res({ ok: true, token: 'fresh' }); await tick();
+    ok('R3 Allow on that dialog then grants it', C.owner && C.owner.token === 'fresh' && bob.ctl.give === 'on' && w.sent.join() === 'bob:{"t":"ctl","on":true}');
+    const v = controlWorld(), D = v.K.control, cy = v.sess('cy');
+    v.from(cy, { t: 'req' }); D.allow(); await tick(); v.from(cy, { t: 'rel' }); v.sent.length = 0;
+    v.grants[0].res({ ok: true, token: 'stale' }); await tick();
+    ok('R3 with no new request the stale grant still ends in a plain no', v.revoked.join() === 'stale' && cy.ctl.give === 'off' && v.sent.join() === 'cy:{"t":"ctl","on":false,"why":"notsharing"}');
+  })().catch((e) => { console.log('FAIL  R3 threw:', e.stack); process.exitCode = 1; });
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
