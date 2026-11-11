@@ -177,7 +177,7 @@ function controlWorld() {
   w.K.sessions = { dc: (sess, _label, msg) => { w.sent.push(`${sess.pub}:${JSON.stringify(msg)}`); return true; } };
   w.K.viewer = { bound: null, applyCtl() {}, showAsk: (sess) => w.dialogs.push(sess.pub) };
   w.K.cast = { retier() {} }; w.K.paint = () => {}; w.K.unprompt = () => {};
-  w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null, deniedAt: 0 } });
+  w.sess = (pub) => ({ pub, closed: false, screenTrack: { contentHint: '' }, remote: { screen: true }, ctl: { give: 'off', take: false, asked: false, askTimer: null, flush: null, move: null, cursor: null, token: null } });
   w.from = (sess, msg) => w.K.control.onMessage(sess, msg);       // a message of theirs, as the session hands it on
   return w;
 }
@@ -250,6 +250,20 @@ const tick = () => new Promise((r) => setImmediate(r));
   ok('R6 the same when the window gets the focus', $('controlYes').disabled === true && (run(60), active) === 'controlNo');
   run(K.ARM_MS); K.control.pending = null; active = 'input'; K.viewer.seen(); win.focus(); run(K.ARM_MS);
   ok('R6 with no request pending nothing is touched', $('controlYes').disabled === false && active === 'input' && timers.length === 0);
+}
+
+// R7: the cooldown after a Deny belongs to the contact, not to the session
+{
+  const w = controlWorld(), C = w.K.control, bob = w.sess('bob'), cy = w.sess('cy');
+  w.from(bob, { t: 'req' }); C.deny('denied');
+  w.now += 2000;
+  const again = w.sess('bob');                                  // he ended the share, I shared again: a new session with the same contact
+  w.sent.length = 0; w.from(again, { t: 'req' });
+  ok('R7 Deny, a new session two seconds later, the same contact asks: no dialog, a plain no', w.dialogs.length === 1 && C.pending === null && again.ctl.give === 'off' && w.sent.join() === 'bob:{"t":"ctl","on":false}');
+  w.from(cy, { t: 'req' });
+  ok('R7 another contact is not held off by it', w.dialogs.join() === 'bob,cy' && C.pending && C.pending.sess === cy);
+  C.deny('denied'); w.now += w.K.DENY_COOLDOWN_MS - 2000 + 1; w.from(again, { t: 'req' });
+  ok('R7 ten seconds after the Deny the first contact gets the dialog again', w.dialogs.join() === 'bob,cy,bob' && C.pending.sess === again);
 }
 
 // P1: one pop-up per incoming share, per contact

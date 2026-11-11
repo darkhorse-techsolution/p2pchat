@@ -14,6 +14,11 @@
   const K = window.ShareKit;
   const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, timer }
   const dc = (sess, msg) => K.sessions.dc(sess, 'ctl', msg);
+  // When I last said no to a contact (a Deny, or a request of theirs that was taken back or ran out). By
+  // contact, not by session: ending the share and coming back in a new one must not bring the dialog
+  // straight up again, and a viewer that dropped out is added again without a click of mine.
+  const refused = new Map();   // pub -> ms
+  const refuse = (pub) => { const now = Date.now(); for (const [k, at] of refused) if (now - at >= K.DENY_COOLDOWN_MS) refused.delete(k); refused.set(pub, now); };
 
   // The shared picture carries no pointer, so a Mac sharer's helper reports the system cursor image
   // whenever it changes (main/input.js onCursor); it rides the reliable channel and becomes the
@@ -40,7 +45,7 @@
         if (C.owner && C.owner.sess === sess && ctl.give === 'on') { dc(sess, { t: 'ctl', on: true }); return; }
         if ((C.pending && C.pending.sess === sess) || (C.owner && C.owner.sess === sess)) return;   // its dialog is open, or its grant is being started
         if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); toast(`${name} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
-        if (Date.now() - ctl.deniedAt < K.DENY_COOLDOWN_MS) { dc(sess, { t: 'ctl', on: false }); return; }
+        if (Date.now() - (refused.get(sess.pub) || 0) < K.DENY_COOLDOWN_MS) { dc(sess, { t: 'ctl', on: false }); return; }
         C.pending = { sess, timer: setTimeout(() => deny('expired'), K.tune.GIVE_ASK_MS) };
         ctl.give = 'asked';
         K.viewer.showAsk(sess); K.paint();
@@ -110,7 +115,7 @@
   function deny(why) {
     const p = C.pending;
     if (!p) return;
-    if (why === 'denied') p.sess.ctl.deniedAt = Date.now();
+    if (why === 'denied') refuse(p.sess.pub);
     endGive(p.sess, why);
   }
   // Control of my screen by this session ends, whatever state it was in (asked, being granted, on):
@@ -121,7 +126,7 @@
       clearTimeout(C.pending.timer); C.pending = null; K.unprompt('mControl');
       // A request they took back, or that ran out, counts like a Deny for the cooldown: asking and letting
       // go in a row would bring the dialog up again each time, over whatever I have open.
-      if (why === 'released' || why === 'expired') ctl.deniedAt = Date.now();
+      if (why === 'released' || why === 'expired') refuse(sess.pub);
     }
     if (ctl.give === 'off' && !mine) return;
     const was = ctl.give, token = mine ? C.owner.token : null;
