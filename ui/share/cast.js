@@ -102,7 +102,7 @@
     const had = cast.members.get(pub);
     if (had && (had.state === 'joining' || had.state === 'live')) return true;
     if (cast.count() >= K.tune.MAX_AUDIENCE) { toast(`A screen share goes to at most ${K.tune.MAX_AUDIENCE} contacts at once`, 'err'); return false; }
-    const sess = K.sessions.get(pub) || K.sessions.open(pub, null, false);
+    const fresh = !K.sessions.get(pub), sess = K.sessions.get(pub) || K.sessions.open(pub, null, false);
     if (!sess) { toast('Too many screen shares at once', 'err'); return false; }
     const me = { state: 'joining', mode, timer: null, back: null };
     drop(pub); cast.members.set(pub, me); cast.adding++;
@@ -112,7 +112,9 @@
       await sess.ready;
       if (!ok || gone()) {
         if (cast.members.get(pub) === me) cast.members.delete(pub);
-        if (!sess.closed && idle(sess)) K.sessions.close(sess, 'capture');   // a session opened for this share and nothing else
+        // Only a session this call opened, and that the contact has not spoken in: one that their own share
+        // is just arriving in (the offer is there, the `state` frame not yet) looks as idle and is theirs.
+        if (fresh && !sess.seen && !sess.closed && idle(sess)) K.sessions.close(sess, 'capture');
         return false;
       }
       sess.mode = mode || sess.mode;

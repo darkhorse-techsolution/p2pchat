@@ -147,6 +147,26 @@ const js = (v) => JSON.stringify(v);   // values made inside the context are com
   })().catch((e) => { console.log('FAIL  L1 threw:', e.stack); process.exitCode = 1; });
 }
 
+// L2: a Share click whose capture does not start closes only the session it opened itself
+{
+  const closed = [], held = new Map();
+  let perm = null;
+  const K = load(['kit.js', 'tune.js', 'cast.js'], { toast() {}, renderContacts() {}, contact: (pub) => ({ pub, name: pub, status: 'online' }), showScreenPermission() {},
+    api: { screenPermission: () => new Promise((res) => { perm = () => res('denied'); }), captureEnded: async () => true } });
+  K.paint = () => {}; K.control = { owner: null };
+  const mk = (pub, seen) => ({ pub, seen, closed: false, ready: Promise.resolve(), remote: { screen: false, mic: false }, screenTrack: null, micTrack: null });
+  K.sessions = { get: (pub) => held.get(pub) || null, open: (pub) => { const x = mk(pub, false); held.set(pub, x); return x; }, all: () => [...held.values()], close: (x, why) => { x.closed = true; closed.push(`${x.pub}:${why}`); } };
+  (async () => {
+    held.set('theirs', mk('theirs', true));                     // their offer is in, their state frame is not: nothing flows yet
+    const a = K.cast.add('theirs', 'one'), b = K.cast.add('mine', 'one'), c = K.cast.add('both', 'one');
+    held.get('both').seen = true;                               // a session this click opened, and their own share arrives in it meanwhile
+    await new Promise((r) => setTimeout(r, 5)); perm();
+    const r = [await a, await b, await c];
+    ok('L2 no capture: every call fails and nobody is left in the audience', r.join() === 'false,false,false' && K.cast.members.size === 0 && K.cast.adding === 0 && K.capture.state === 'idle');
+    ok('L2 the session the click opened for nothing is closed; one the contact opened, or spoke in meanwhile, is not', closed.join() === 'mine:capture' && !held.get('theirs').closed && !held.get('both').closed);
+  })().catch((e) => { console.log('FAIL  L2 threw:', e.stack); process.exitCode = 1; });
+}
+
 // P1: one pop-up per incoming share, per contact
 {
   const { createSharePops } = require('../main/sharepop.js');
