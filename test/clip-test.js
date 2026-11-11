@@ -184,5 +184,18 @@ const DISPLAY = { id: 1 };
   const p2 = m.clip.apply(r.id, 'late'); await settle(); m.clip.stop('renderer'); const reads2 = m.reads; letGo(); await p2; await settle();
   ok('V2 a link that stopped while a write was under way is not read again after it', m.reads === reads2 && m.clip.status().on === false);
 
+  // V4: a marked copy that lands between the marker check and the read is not sent (review of stage D, LOW 1)
+  const MARK = 'electron application/osclipboard;format="org.nspasteboard.ConcealedType"';
+  m = machine(); m.text = 'x'; tok = await m.allow('bob', true); r = await m.clip.start({ pub: 'bob', role: 'give', token: tok });
+  let asked = 0; const has4 = m.backend.has;
+  m.backend.has = async (f) => { const marked = await has4(f); if (++asked === 3) { m.text = 'PASSWORD'; m.marks.add(MARK); } return marked; };   // the three markers of this platform were asked about: now the password manager copies
+  await fire(); m.backend.has = has4;
+  ok('V4 the copy came after the check found no marker and before the read: it is not sent', asked >= 3 && m.texts.length === 0 && m.notes.length === 0);
+  await fire(); await fire();
+  ok('V4 and not on the looks after it, while it is marked', m.texts.length === 0);
+  m.marks.clear(); m.text = 'plain'; await fire();
+  ok('V4 the next plain copy is sent', m.texts.join() === `${r.id}:plain`);
+  m.clip.stop('test');
+
   process.exit(process.exitCode || 0);
 })().catch((e) => { console.log('FAIL  harness threw:', e.stack); process.exit(1); });

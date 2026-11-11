@@ -59,6 +59,9 @@ function createClipLink({ backend, platform, enabled, grant }) {
 
   // One look at the clipboard. Sent on: a text that is new since the last look, did not come from the
   // peer, has no NUL and fits the bound. A read that is still waiting stands for the ones after it.
+  // The marker check and the read are two calls: a marked copy can land between them. So a text that
+  // would count as new is asked about once more after it was read, and one that is marked by then is
+  // neither sent nor remembered.
   function tick(l) {
     if (link !== l || l.queued) return;
     l.queued = true;
@@ -69,6 +72,7 @@ function createClipLink({ backend, platform, enabled, grant }) {
       if (await concealed()) return;
       const t = norm(await backend.readText());
       if (link !== l || !t || t === l.last) return;
+      if (await concealed() || link !== l) return;
       l.last = t;
       if (t === l.peer) return;
       if (t.includes('\0')) { if (api.onNote) api.onNote(l.id, 'refused'); return; }
