@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- This hidden window does the speech-to-text. It needs wasm-unsafe-eval for the WASM recognizer and
+     fetches its engine, runtime and model only from p2pcap:// (served by main from app resources and the
+     downloaded model in userData). No network, no other origin. The main chat window keeps its strict CSP. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' blob:; connect-src 'self' p2pcap: blob: data:; worker-src 'self' blob:; style-src 'unsafe-inline'">
+<title>captioner</title>
+</head>
+<body>
+<script type="module" src="p2pcap://app/captioner.js"></script>
+</body>
+</html>

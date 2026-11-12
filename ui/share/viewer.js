@@ -25,6 +25,7 @@
     v.muted = true;                                        // their voice plays from the session's <audio>
     if (v.srcObject !== view) { v.srcObject = view; if (view) v.play().catch(() => {}); }
     applyCtl(); syncKeys();
+    if (K.caption) K.caption.sync();   // captions follow the share on screen
   }
   // Their voice has an element of the session's own: it is heard whichever chat is open, and the video
   // never carries sound.
@@ -32,6 +33,7 @@
     let a = sess.remote.audioEl;
     if (!a) { a = sess.remote.audioEl = document.createElement('audio'); a.autoplay = true; a.dataset.pub = sess.pub; $('shareAudio').appendChild(a); }
     a.srcObject = new MediaStream([sess.remote.audio]); a.muted = sess.muted; a.play().catch(() => {});
+    if (K.caption) K.caption.sync();   // the voice just arrived for a watched share: captions can start
   }
   // the video takes my pointer and keys only while I drive the session it shows
   function applyCtl() {
@@ -121,6 +123,7 @@
     if (a) { a.srcObject = null; a.remove(); sess.remote.audioEl = null; }
     if (K.viewer.backFor === sess) { K.viewer.backFor = null; K.unprompt('mShareBack'); }   // the prompt names this contact: it must not outlive the session
     if (K.viewer.bound === sess) K.viewer.bound = null;    // the paint that ends every close takes the video and full screen down
+    if (K.caption) K.caption.sync();
   }
 
   // where on their display the pointer is: fractions of the video picture (object-fit: contain leaves bars)

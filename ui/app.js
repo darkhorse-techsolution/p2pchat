@@ -331,7 +331,7 @@ function renderSettings() {
   $('setPopups').checked = S.settings.popups !== false; $('setPopupText').checked = S.settings.popupText !== false;
   $('setCodeWrap').checked = S.prefs.codeWrap !== false; $('setCodeCollapse').checked = S.prefs.codeCollapse !== false;
   document.querySelectorAll('#shareModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.shareMode || 'one')));
-  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('recordingsDir').textContent = S.recordingsDir || '';
+  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
   $('aboutLine').textContent = `P2P Chat ${S.version}${S.packaged ? '' : ' (dev)'} · log: ${S.logPath || 'n/a'}`;
   const v = $('vaultInfo'); v.className = 'vault ' + (S.vaultSecure ? 'ok' : 'warn');
   v.textContent = (S.vaultSecure ? 'Vault key held by the OS keychain · ' : S.packaged ? 'Vault key stored unprotected (no keychain available) · ' : 'Dev run: vault key is a plain file, Keychain not used · ') + S.vaultPath;
@@ -351,6 +351,13 @@ $('setTurn').onchange = saveTurn; $('setTurnUser').onchange = saveTurn; $('setTu
 $('setCallsRelayOnly').onchange = async (e) => { S.settings.callsRelayOnly = await window.api.setPref('callsRelayOnly', e.target.checked); };
 $('setRecordShares').onchange = async (e) => { S.settings.recordShares = await window.api.setPref('recordShares', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setClipboardSync').onchange = async (e) => { S.settings.clipboardSync = await window.api.setPref('clipboardSync', e.target.checked); if (window.Share) window.Share.onSettings(); };
+$('setCaptions').onchange = async (e) => { S.settings.captions = await window.api.setPref('captions', e.target.checked); renderCaptionNote(); if (window.Share) window.Share.onSettings(); };
+function renderCaptionNote() {
+  const note = $('captionNote'); if (!note) return;
+  const on = !!S.settings.captions, present = !!(S.caption && S.caption.present);
+  note.hidden = !on;
+  note.textContent = on ? (present ? 'On-device English captions, tiny model. Nothing is sent anywhere; only the voice of the share you are watching is read.' : 'First time on: downloads a one-time English model and runtime (about 70 MB) to this device. Nothing else leaves your computer.') : '';
+}
 $('openRecordings').onclick = () => window.api.openRecordings();
 $('setAutostart').onchange = async (e) => { S.settings.autostart = await window.api.setAutostart(e.target.checked); };
 $('setDiscovery').onchange = async (e) => { S.discovery = await window.api.discovery(e.target.checked); S.settings.discovery = S.discovery; };
@@ -418,7 +425,7 @@ $('shield').onclick = async () => renderShield(await window.api.protection(!S.pr
 async function refreshState() {
   const s = await window.api.state();
   S.me = s.me; S.contacts = s.contacts; S.settings = s.settings; S.capture = s.capture; S.vaultSecure = s.vaultSecure; S.vaultPath = s.vaultPath; S.recordingsDir = s.recordingsDir; S.discovery = !!s.settings.discovery;
-  S.autostartSupported = s.autostartSupported; S.version = s.version; S.packaged = s.packaged; S.logPath = s.logPath; S.backgroundApp = s.backgroundApp; S.defaults = s.defaults; S.turn = s.turn; renderMode(s.mode);
+  S.autostartSupported = s.autostartSupported; S.version = s.version; S.packaged = s.packaged; S.logPath = s.logPath; S.backgroundApp = s.backgroundApp; S.defaults = s.defaults; S.turn = s.turn; S.caption = s.caption; renderMode(s.mode);
   S.prefs = { sidebarWidth: s.settings.sidebarWidth ?? 300, sidebarCollapsed: !!s.settings.sidebarCollapsed, codeWrap: s.settings.codeWrap !== false, codeCollapse: s.settings.codeCollapse !== false }; applyLayout();
   applyTheme(s.settings.theme || 'system');
   renderMe(); renderContacts(); renderShield(s.protection); renderRelay(s.relay);
@@ -462,6 +469,8 @@ window.api.onEvent(async (ev) => {
     case 'fullHotkey': if (window.Share && window.Share.active()) window.Share.setFull(); break;
     case 'mode': renderMode(ev.mode); toast(`${MODE_TEXT[ev.mode]}. ${prettyHotkey(ev.hotkey)} cycles modes.`, ev.mode === 'overlay' ? '' : 'ok'); break;
     case 'settings': S.settings = { ...S.settings, ...ev }; if (openModal === 'mSettings') renderSettings(); if (window.Share) window.Share.onSettings(); break;
+    case 'caption': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onText(ev); break;
+    case 'caption-status': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onStatus(ev); if (ev.state === 'ready' || ev.state === 'off') { if (S.caption) S.caption.present = true; if (openModal === 'mSettings') renderCaptionNote(); } break;
     case 'fullscreen': if (window.Share) window.Share.onFullscreen(ev); break;
     case 'control': if (window.Share) window.Share.onControl(ev); break;
     case 'cursor': if (window.Share) window.Share.onCursor(ev); break;

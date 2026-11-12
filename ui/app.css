@@ -283,7 +283,10 @@ body.short .modal { max-height: calc(100vh - 24px); padding: 16px 18px; }
 .share-pill.idle { color: var(--dim); background: var(--panel-2); }
 #btnMic.on { color: var(--good); border-color: var(--good); }
 .contact .live { color: var(--bad); font-size: 10.5px; font-weight: 700; }
-.viewer { background: var(--viewer-bg); display: flex; flex-direction: column; border-bottom: 1px solid var(--line); flex: 0 0 auto; max-height: 58%; min-height: 160px; }
+.viewer { background: var(--viewer-bg); display: flex; flex-direction: column; border-bottom: 1px solid var(--line); flex: 0 0 auto; max-height: 58%; min-height: 160px; position: relative; }
+.viewer-captions { position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 40; max-width: min(90%, 900px); padding: 5px 12px; border-radius: 8px; background: rgba(0, 0, 0, .66); color: #fff; font-size: 15px; line-height: 1.35; text-align: center; white-space: pre-line; pointer-events: none; text-shadow: 0 1px 2px rgba(0, 0, 0, .85); }
+body.theater .viewer-captions { bottom: 7%; font-size: 20px; max-width: min(84%, 1100px); }
+.app.narrow .viewer-captions { font-size: 13px; bottom: 48px; }
 .viewer video { width: 100%; flex: 1; min-height: 0; max-height: calc(58vh - 44px); object-fit: contain; background: var(--viewer-bg); }
 .viewer-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--panel); font-size: 12px; flex: none; }
 .viewer-name { font-weight: 700; }

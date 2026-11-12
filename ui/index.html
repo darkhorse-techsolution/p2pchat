@@ -72,6 +72,7 @@
       </header>
       <section class="viewer hidden" id="viewer">
         <video id="viewerVideo" autoplay playsinline tabindex="0"></video>
+        <div class="viewer-captions hidden" id="viewerCaptions" aria-live="polite"></div>
         <div class="viewer-bar">
           <span class="viewer-name" id="viewerName"></span><span class="viewer-stats" id="viewerStats"></span><span class="viewer-aud" id="viewerAud"></span>
           <span class="spacer"></span>
@@ -173,6 +174,8 @@
     <div class="muted small">The call server (STUN/TURN) passes the share between two home networks that cannot reach each other directly. It only sees encrypted media. Leave the host empty to allow direct and local-network shares only.</div>
     <label class="check"><input type="checkbox" id="setCallsRelayOnly"> Route shares through the call server only (hides your IP address from the contact)</label>
     <label class="check"><input type="checkbox" id="setRecordShares"> Record incoming screen shares to a file (their screen and voice)</label>
+    <label class="check"><input type="checkbox" id="setCaptions"> Live captions of a contact's voice while you watch their share (on-device, downloads once)</label>
+    <p class="muted" id="captionNote" hidden></p>
     <div class="row"><button id="openRecordings">Open recordings folder</button><span class="muted small" id="recordingsDir"></span></div>
     <div class="muted small">Starts when a contact's screen arrives, also for a share already running when you switch this on; ● Record in the viewer does the same for one share. Plain .webm files (VP9 + Opus) outside the encrypted vault, playable anywhere. The contact's app shows that they are being recorded.</div>
     <label class="check"><input type="checkbox" id="setClipboardSync"> Share clipboard text during remote control (both ways, only while control is on)</label>
@@ -249,6 +252,7 @@
 <script src="share/clip.js"></script>
 <script src="share/record.js"></script>
 <script src="share/viewer.js"></script>
+<script src="share/caption.js"></script>
 <script src="share.js"></script>
 </body>
 </html>

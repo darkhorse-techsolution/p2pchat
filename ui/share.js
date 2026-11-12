@@ -43,6 +43,7 @@
     // The switch went off: the link ends on both sides, and every offer of mine that is still out is withdrawn
     // (a request sent while it was on). Switching it on again brings neither back: that takes a new request.
     if (S.settings.clipboardSync === false) { for (const sess of map.values()) sess.ctl.askedClip = false; if (K.clip.link) K.clip.off(K.clip.link.sess, 'setting'); }
+    if (K.caption) K.caption.sync();
     render();
   }
 

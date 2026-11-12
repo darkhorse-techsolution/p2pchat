@@ -12,6 +12,7 @@ const { createController } = require('./input.js');
 const { createGrant } = require('./grant.js');
 const { createClipLink } = require('./clip.js');
 const { createSharePops } = require('./sharepop.js');
+const { createCaptioner } = require('./caption.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -74,7 +75,12 @@ if (isLinux) app.setDesktopName('io.p2pchat.P2PChat.desktop'); // must match the
 // Image bytes reach the renderer as p2pblob://img/<contact>/<message id>, served from the
 // sealed blob files, instead of data: URLs: the DOM never holds megabytes of base64 and
 // Chromium caches the decoded image. Must be registered before 'ready'.
-protocol.registerSchemesAsPrivileged([{ scheme: 'p2pblob', privileges: { standard: true, secure: true } }]);
+// p2pcap serves the hidden captioner window (ui/caption + the downloaded engine and model); it needs
+// fetch/module access for the WASM recognizer, so it carries supportFetchAPI/stream as well.
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'p2pblob', privileges: { standard: true, secure: true } },
+  { scheme: 'p2pcap', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
 // A share is driven live, so each video frame is painted when it arrives: no jitter cushion, no A/V-sync hold.
 // First trial: this app as viewer, whatever the sharer runs. Second: tags outgoing video so a viewer on an older
 // build does the same. Price: a lost packet shows as a short stall where the cushion used to hide it;
@@ -202,6 +208,8 @@ function opacityKey(input) {
   return 0;
 }
 const push = (type, data = {}) => { if (win && !win.isDestroyed()) win.webContents.send('event', { type, ...data }); };
+// Live captions for a watched share: a hidden WASM window transcribes the voice; see main/caption.js.
+const captioner = createCaptioner({ app, protocol, BrowserWindow, ipcMain, log, push });
 
 // --- message pop-ups -------------------------------------------------------------
 // Drawn by the app, not the OS: no app name, no icon, nothing left in Notification
@@ -410,6 +418,7 @@ handle('state', () => ({
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
   recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE }, keysRemote,
+  caption: { present: captioner.assetsPresent(), ready: captioner.isReady() },
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -487,6 +496,11 @@ function setViewerFullscreen(on) {
 }
 handle('fullscreen', (_e, on) => setViewerFullscreen(on));
 handle('keysRemote', (_e, on) => setKeysRemote(on));
+// Live captions: the page says which watched contact's voice to caption and streams its 16 kHz PCM here;
+// main forwards it to the hidden captioner window. Only ever the voice already playing in the viewer.
+handle('captionOn', (_e, pub) => { captioner.start(String(pub || '')); return captioner.isReady(); });
+handle('captionOff', () => { captioner.stop(); return true; });
+ipcMain.on('caption-pcm', (e, pub, buf) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; captioner.feed(String(pub || ''), buf); });
 // --- remote control of the shared display ------------------------------------------
 // The sharer allowed the viewer to drive this machine: a helper process posts the viewer's
 // events to the OS (main/input.js). Granted to one contact at a time (main/grant.js): the
@@ -603,8 +617,8 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
-handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); store.saveSoon(); push('settings', settings()); return settings()[key]; });
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions') captioner.setEnabled(settings().captions); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
 // Dev builds only: lets the UI test suite resize the real window. Not registered in packaged builds.
 if (!PROD) handle('devResize', (_e, w, h) => { win.setBounds({ width: Math.max(300, Number(w) | 0), height: Math.max(250, Number(h) | 0) }); return win.getBounds(); });
@@ -669,6 +683,8 @@ async function boot() {
     const rec = store.conv(pub).messages.find((x) => x.id === id);
     return new Response(data, { headers: { 'content-type': rec?.mime || 'image/jpeg', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
   });
+  captioner.handleProtocol();
+  if (settings().captions) captioner.setEnabled(true);   // opt-in: downloads the engine + model once, then runs a hidden WASM window
 
   engine = new Engine(store, new Transport());
   for (const ev of ['contact', 'status', 'update', 'history', 'typing', 'error', 'info', 'discovered', 'relay', 'share']) engine.on(ev, (d) => push(ev, d));
