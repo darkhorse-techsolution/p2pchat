@@ -20,6 +20,8 @@
 //   blob   { id, i, n, d }        that part, base64; n = parts in total, 0 = "I do not have it"
 //   share  { op, v?, ... }        screen-share / call signaling (WebRTC SDP, ICE, state, bye): live only, never stored;
 //                                 v = the sender's share protocol version (absent up to 0.7.1)
+//   ua     { op, id, ... }        unattended access: a contact proves the password this machine's owner set for it
+//                                 (main/unattended.js has the exchange): live only, never stored; unknown to 0.9.0 and older
 //
 // An image message is small on every path above (record only), so frames stay
 // under the 256 KB cap and catch-up and history need nothing new. Whoever holds
@@ -53,6 +55,20 @@ const BLOB_STALL = 30000;        // no part for this long = give up on this pull
 const BLOB_SCAN = 50;            // image records without bytes queued per scan; scans repeat while pulls succeed
 const BLOB_QUOTA = 512 * 1024 * 1024; // auto-pull stops past this many image bytes per contact (fetchImage still works)
 const BLOB_SERVE_MIN_MS = 25;    // at most one part per 25 ms per peer when serving: bounds what a flood of asks can cost
+
+// An unattended-access frame: its shape and nothing more. Whether it is answered is decided in main/unattended.js.
+const UA_OPS = new Set(['ask', 'chal', 'proof', 'ok', 'no']);
+const UA_WHY = new Set(['off', 'locked', 'wrong', 'expired', 'busy', 'perm', 'capture', 'unavailable']);
+function sanitizeUa(m) {
+  if (!m || typeof m !== 'object' || !UA_OPS.has(m.op)) return null;
+  if (typeof m.id !== 'string' || !/^[0-9a-f]{16}$/.test(m.id)) return null;
+  const b64 = (v, min, max) => (typeof v === 'string' && v.length >= min && v.length <= max && /^[A-Za-z0-9_-]+$/.test(v) ? v : null);
+  const out = { op: m.op, id: m.id };
+  if (m.op === 'chal') { out.salt = b64(m.salt, 22, 22); out.nonce = b64(m.nonce, 43, 43); if (!out.salt || !out.nonce) return null; }   // 16 and 32 bytes
+  else if (m.op === 'proof') { out.mac = b64(m.mac, 43, 43); if (!out.mac) return null; }                                                 // 32 bytes
+  else if (m.op === 'no') { out.why = UA_WHY.has(m.why) ? m.why : 'unavailable'; if (Number.isInteger(m.wait) && m.wait > 0 && m.wait <= 86400) out.wait = m.wait; }
+  return out;
+}
 
 // A share frame is forwarded to the UI as is, after this shape check: the WebRTC
 // stack in the renderer parses the SDP and candidates, we only bound them.
@@ -275,6 +291,15 @@ class Engine extends EventEmitter {
     const f = sanitizeShare(payload);
     if (!f) throw new Error('bad share frame');
     this.#send(p, { k: 'share', ...f });
+    return true;
+  }
+  // Unattended access: live only as well.
+  sendUa(pub, payload) {
+    const p = this.peers.get(pubId(pub));
+    if (!p) throw new Error('they are offline');
+    const f = sanitizeUa(payload);
+    if (!f) throw new Error('bad unattended-access frame');
+    this.#send(p, { k: 'ua', ...f });
     return true;
   }
 
@@ -588,8 +613,9 @@ class Engine extends EventEmitter {
       case 'addr': { if (link.isAddr(m.addr) && this.store.contact(id)?.theirAddr !== m.addr) this.store.upsertContact(id, { theirAddr: m.addr }); break; }
       case 'typing': this.emit('typing', { pub: id }); break;
       case 'share': { const f = sanitizeShare(m); if (f) this.emit('share', { pub: id, ...f }); break; }
+      case 'ua': { const f = sanitizeUa(m); if (f) this.emit('ua', { pub: id, ...f }); break; }
     }
   }
 }
 
-module.exports = { Engine, sanitizeShare };
+module.exports = { Engine, sanitizeShare, sanitizeUa };

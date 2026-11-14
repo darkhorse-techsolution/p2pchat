@@ -14,10 +14,15 @@
 // so in the answer (clip:1). The two flags that come of it (ctl.giveClip, ctl.takeClip) are set here and
 // cleared here; the link itself is share/clip.js, which is told on every change of control (K.clip.sync).
 //
-// Reads from app.js: S, toast, ipcErr. Reads K.sessions, K.tune, K.cast.retier, K.viewer, K.clip, K.unprompt and K.paint at call time.
+// A contact that is connected unattended (share/unattended.js) is not asked about in a dialog: the
+// owner of this machine allowed its control beforehand, with the password that contact has just
+// shown. Its request goes straight to allow(); the grant, the token and every way control ends are
+// the same.
+//
+// Reads from app.js: S, toast, ipcErr. Reads K.sessions, K.tune, K.cast.retier, K.viewer, K.clip, K.unattended, K.unprompt and K.paint at call time.
 (() => {
   const K = window.ShareKit;
-  const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, clip, timer }
+  const C = K.control = { owner: null, pending: null, taking: null };   // owner: { sess, token } (token null while main starts the grant); pending: { sess, clip, timer, auto }
   const clipOn = () => S.settings.clipboardSync !== false && !K.clip.link;   // the clipboard can be offered or taken up: my switch is on and no other session has it
   const dc = (sess, msg) => K.sessions.dc(sess, 'ctl', msg);
   // When I last said no to a contact (a Deny, or a request of theirs that they took back). By
@@ -60,6 +65,8 @@
         if (C.owner && C.owner.sess === sess && ctl.give === 'on') { dc(sess, { t: 'ctl', on: true, clip: ctl.giveClip ? 1 : 0 }); return; }
         if ((C.pending && C.pending.sess === sess) || (C.owner && C.owner.sess === sess)) return;   // its dialog is open, or its grant is being started
         if (C.owner || C.pending) { dc(sess, { t: 'ctl', on: false, why: 'busy' }); once(sess, 'busy', `${K.label(sess.pub, 'Another viewer')} also asked for control`); return; }   // no second dialog: the controller's own clicks could answer it
+        // unattended: answered beforehand, and with the clipboard when they offer it and nothing here stands against it
+        if (K.unattended && K.unattended.hosts(sess.pub)) { C.pending = { sess, clip: m.clip === 1 && clipOn(), timer: null, auto: true }; ctl.give = 'asked'; allow().then((why) => K.unattended.said(sess.pub, why)); return; }
         if (Date.now() - (refused.get(sess.pub) || 0) < K.DENY_COOLDOWN_MS) { dc(sess, { t: 'ctl', on: false }); return; }
         {
           // the dialog offers the clipboard only when they asked for it and nothing here stands against it; if not, it says why
@@ -110,11 +117,11 @@
   // the dialog's Allow
   async function allow() {
     const p = C.pending;
-    if (!p) return;
-    const ticked = p.clip && K.viewer.clipTicked();   // the box as it stands at the click, read before the dialog goes
+    if (!p) return 'gone';
+    const ticked = p.clip && (p.auto || K.viewer.clipTicked());   // the box as it stands at the click, read before the dialog goes; an unattended request had no dialog
     clearTimeout(p.timer); C.pending = null; K.unprompt('mControl');
     const sess = p.sess, ctl = sess.ctl, name = K.nameOf(sess.pub);
-    if (sess.closed || !sess.screenTrack) { ctl.give = 'off'; dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); K.paint(); return; }
+    if (sess.closed || !sess.screenTrack) { ctl.give = 'off'; dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); K.paint(); return 'notsharing'; }
     const own = C.owner = { sess, token: null };   // before the await: from here on every other request is busy
     let r; try { r = await window.api.controlGrant(sess.pub, ticked); } catch (e) { r = { ok: false, reason: 'helper', message: ipcErr(e) }; }
     // The grant came back for a session that closed, stopped sending my screen or gave control up
@@ -124,7 +131,7 @@
       if (C.owner === own) C.owner = null;
       // unless the same contact let go and asked anew meanwhile: that request has its own dialog open, and this grant is not its answer
       if (!(C.pending && C.pending.sess === sess)) { ctl.give = 'off'; if (!sess.closed) dc(sess, { t: 'ctl', on: false, why: 'notsharing' }); }
-      K.paint(); return;
+      K.paint(); return 'gone';
     }
     if (r && r.ok) {
       own.token = ctl.token = r.token; ctl.give = 'on';
@@ -140,6 +147,7 @@
       toast((r && r.message) || 'Control could not be allowed', 'err');
     }
     K.paint();
+    return r && r.ok ? '' : (r && r.reason) || 'helper';   // '' = control is on; else why not (the unattended path logs it: nobody is there to read the toast)
   }
   // the dialog's Deny ('denied'), or nobody answered it ('expired')
   function deny(why) {

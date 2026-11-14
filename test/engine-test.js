@@ -259,6 +259,18 @@ async function boot(who, opts = {}) {
   pbS.conn.send(kc.seal(pbS.session, { k: 'share', op: 'sdp', sid: 'zzz', description: { type: 'offer' } }));
   await sleep(300);
   ok('S1 a malformed share frame from the wire is ignored, session intact', gotShare.length === beforeJunk && bob.status(A) === 'online' && alice.status(A === B ? A : B) === 'online');
+  // S2: unattended-access frames travel the same way: live, shape-checked on both ends, never stored
+  const gotUa = [], aliceUa = []; bob.on('ua', (f) => gotUa.push(f)); alice.on('ua', (f) => aliceUa.push(f));
+  alice.sendUa(B, { op: 'ask', id: 'ab'.repeat(8), junk: 1 });
+  alice.sendUa(B, { op: 'proof', id: 'ab'.repeat(8), mac: 'M'.repeat(43) });
+  ok('S2 ua frames arrive with the sender and only the known fields', await waitFor(() => gotUa.length === 2, 3000, 'ua frames') && JSON.stringify(gotUa[0]) === JSON.stringify({ pub: A, op: 'ask', id: 'ab'.repeat(8) }) && gotUa[1].mac === 'M'.repeat(43));
+  let uaErr = ''; try { alice.sendUa(B, { op: 'ask', id: 'short' }); } catch (e) { uaErr = e.message; }
+  bob.sendUa(A, { op: 'ok', id: 'ab'.repeat(8) });
+  await waitFor(() => aliceUa.length === 1, 3000, 'ua answer');
+  pbS.conn.send(kc.seal(pbS.session, { k: 'ua', op: 'chal', id: 'ab'.repeat(8), salt: 'x' }));
+  await sleep(300);
+  ok('S2 a bad frame is refused locally and ignored from the wire, session intact', /bad unattended/.test(uaErr) && aliceUa.length === 1 && bob.status(A) === 'online' && alice.status(B) === 'online');
+  ok('S2 nothing of it was stored', !JSON.stringify(bob.store.data).includes('M'.repeat(43)));
   bob.stop(); await waitFor(() => alice.status(B) === 'offline', 6000, 'bob off for share');
   let offErr = ''; try { alice.sendShare(B, { op: 'bye', sid: 'abc' }); } catch (e) { offErr = e.message; }
   ok('S1 sending to an offline peer fails at once (no queueing of live frames)', /offline/.test(offErr));

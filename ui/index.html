@@ -63,6 +63,7 @@
               <button data-mode="one"><b>One way</b><span>Only your screen and voice are sent</span></button>
               <button data-mode="two"><b>Two way</b><span>They are asked to share their screen too</span></button>
               <button id="shareCastOpen"><b>Several contacts…</b><span>Pick who gets your screen (up to 4)</span></button>
+              <button id="shareUaOpen"><b>Unattended access…</b><span>Connect to their computer with the password they set for you</span></button>
             </div>
           </div>
           <button class="icon-btn hidden" id="btnMic" title="Microphone">🎙</button>
@@ -133,6 +134,13 @@
     <label class="check"><input type="checkbox" id="infoVerified"> Marked as verified</label>
     <label>Name</label>
     <input id="infoRename">
+    <label>Unattended access</label>
+    <label class="check"><input type="checkbox" id="infoUa"> <span>Let this contact connect to this computer when nobody is here. They see this screen and use its mouse and keyboard, and no question is asked.</span></label>
+    <div class="hidden" id="infoUaBox">
+      <div class="row"><input type="password" id="infoUaPass" placeholder="Password for this contact, 8 characters or more" autocomplete="new-password" spellcheck="false"><button id="infoUaSave">Set password</button></div>
+      <p class="muted small" id="infoUaNote"></p>
+      <p class="muted small">It works while P2P Chat runs here, and both sides need version 0.10.0 or newer. A notice with a Disconnect button stays on this screen for as long as they are connected. No microphone is sent. Clipboard text is shared while they control, if that is on in Settings.</p>
+    </div>
     <div class="modal-actions">
       <button id="infoHistory" title="Ask the peer to send their copy of this conversation">Restore history from peer</button>
       <button class="danger ghost" id="infoRemove">Remove contact</button>
@@ -226,6 +234,15 @@
     <p class="muted"><b id="shareBackName"></b> is sharing their screen and asks to see yours as well (two-way share). You keep watching theirs either way.</p>
     <div class="modal-actions"><button class="ghost" id="shareBackNo">Just watch</button><span class="spacer"></span><button class="primary" id="shareBackYes">Share my screen</button></div>
   </div>
+  <div class="modal hidden" id="mUa">
+    <h3>Connect to <span id="uaName"></span>'s computer</h3>
+    <p class="muted">Unattended access: their screen opens here without anyone accepting over there. It works when they switched it on for you and gave you a password. A notice on their screen says that you are connected.</p>
+    <label>Password</label>
+    <input type="password" id="uaPass" autocomplete="off" spellcheck="false">
+    <label class="check"><input type="checkbox" id="uaCtl" checked> Use their mouse and keyboard as well</label>
+    <div class="muted small hidden" id="uaErr"></div>
+    <div class="modal-actions"><span class="spacer"></span><button class="ghost" data-close>Cancel</button><button class="primary" id="uaGo">Connect</button></div>
+  </div>
   <div class="modal hidden" id="mCast">
     <h3>Share your screen with</h3>
     <p class="muted">One capture of this display goes to every contact you tick, up to 4. They see your screen and hear your microphone, not each other.</p>
@@ -253,6 +270,7 @@
 <script src="share/record.js"></script>
 <script src="share/viewer.js"></script>
 <script src="share/caption.js"></script>
+<script src="share/unattended.js"></script>
 <script src="share.js"></script>
 </body>
 </html>

@@ -7,13 +7,14 @@
 // K.tune.MAX_AUDIENCE of them watch the one capture; they see my screen and hear my microphone, not each other.
 //
 // Reads from app.js: toast, contact, renderContacts, window.showScreenPermission. Reads K.sessions, K.tune,
-// K.control, K.clip, K.nameOf and K.paint at call time.
+// K.control, K.clip, K.unattended, K.nameOf and K.paint at call time.
 (() => {
   const K = window.ShareKit;
   // members: pub -> { state: 'joining' | 'live' | 'away', mode, timer, back }; adding: add() and talk() calls in flight;
   // leasing: the add() calls among them that have not taken their lease of the capture yet
   const cast = K.cast = { members: new Map(), adding: 0, leasing: 0 };
-  const drop = (pub) => { const m = cast.members.get(pub); if (m) { clearTimeout(m.timer); clearTimeout(m.back); cast.members.delete(pub); } };
+  // The one place a contact leaves the audience: an unattended session with it (share/unattended.js) is over with that.
+  const drop = (pub) => { const m = cast.members.get(pub); if (m) { clearTimeout(m.timer); clearTimeout(m.back); cast.members.delete(pub); if (K.unattended) K.unattended.left(pub); } };
 
   // --- the two devices ---------------------------------------------------------------
   // Starting a device takes several awaits (the permission, then the device), so every call that arrives
@@ -95,8 +96,10 @@
   // count of calls in flight are set before the first await, so a second click finds the first one, and
   // neither device is stopped under a call that has not taken its lease yet. After every await the call
   // checks that the session is still open and still its own: Stop or a closed session ends it there,
-  // and nothing more is attached.
-  async function add(pub, mode) {
+  // and nothing more is attached. `opts.mic === false`: the screen alone, whatever the microphone is doing
+  // (an unattended share: nobody is here to say that the room may be heard).
+  async function add(pub, mode, opts) {
+    const noMic = !!opts && opts.mic === false;
     const c = contact(pub);
     if (!c) return false;
     if (c.status !== 'online') { toast(`${K.hushed() ? 'That contact' : c.name} is offline: a screen share needs them connected`, 'err'); return false; }
@@ -127,10 +130,10 @@
       K.sessions.openChannels(sess);                          // in the same task as addTrack: one negotiation covers both
       sess.screenSender = sess.pc.addTrack(t, K.tune.streamFor(sess, 'video'));
       K.tune.codecs(sess.pc, sess.screenSender);
-      if (!sess.micTrack && mic.state === 'live' && !K.tune.SPLIT_MIC) attachMic(sess);   // a microphone that is on already rides the same offer
+      if (!noMic && !sess.micTrack && mic.state === 'live' && !K.tune.SPLIT_MIC) attachMic(sess);   // a microphone that is on already rides the same offer
       await K.tune.sender(sess, tierOf(sess));
       if (gone()) return false;
-      if (!sess.micTrack) {
+      if (!sess.micTrack && !noMic) {
         const got = await mic.acquire(true);
         if (gone()) return false;
         if (got && K.tune.SPLIT_MIC) { await sess.peerSeen; if (gone()) return false; }   // a stream of its own only for a peer known to sort tracks by kind
@@ -216,12 +219,13 @@
 
   // A session closes: its leases go back, and a device nobody else holds stops. A viewer that went offline
   // while others still get my screen stays in the audience as away for a while, and is added again when
-  // it is back (peerOnline). The paint is the caller's.
+  // it is back (peerOnline). Not one that is connected unattended: it comes back with its password or not
+  // at all. The paint is the caller's.
   function sessionClosed(sess, why) {
     capture.release(sess); mic.release(sess);
     sess.screenTrack = sess.micTrack = sess.screenSender = sess.micSender = null;
     const pub = sess.pub, m = cast.members.get(pub);
-    if (m && why === 'offline' && m.state === 'live' && capture.state === 'live') { m.state = 'away'; m.timer = setTimeout(() => { if (cast.members.get(pub) === m) { drop(pub); K.paint(); renderContacts(); } }, K.REJOIN_MS); }
+    if (m && why === 'offline' && m.state === 'live' && capture.state === 'live' && !(K.unattended && K.unattended.hosts(pub))) { m.state = 'away'; m.timer = setTimeout(() => { if (cast.members.get(pub) === m) { drop(pub); K.paint(); renderContacts(); } }, K.REJOIN_MS); }
     else drop(pub);
     capture.settle(); mic.settle();   // the last viewer gone: the capture stops and takes whoever is away with it
     retier(); tell();
@@ -262,12 +266,13 @@
   function text(anon) {
     const here = [], away = [], rec = [];
     for (const [pub, m] of cast.members) {
-      (m.state === 'away' ? away : here).push(K.nameOf(pub));
+      (m.state === 'away' ? away : here).push(K.nameOf(pub) + (K.unattended && K.unattended.hosts(pub) ? ' (unattended)' : ''));
       const x = K.sessions.get(pub); if (x && x.screenTrack && x.remote.rec) rec.push(K.nameOf(pub));
     }
     const own = K.control.owner, driver = own && own.sess.ctl.give === 'on' ? K.nameOf(own.sess.pub) : '', n = (k) => `${k} contact${k === 1 ? '' : 's'}`;
     return 'Sharing your screen' + (here.length ? ` with ${anon ? n(here.length) : listed(here.sort(byName))}` : '')
       + (away.length ? ` (${anon ? away.length : listed(away.sort(byName))} reconnecting)` : '')
+      + (anon && K.unattended && K.unattended.hosted().length ? ' · unattended access' : '')
       + (driver ? (anon ? ' · controlled' : ` · ${driver} controls it`) : '')
       + (K.clip.link && K.clip.link.role === 'give' ? ' · clipboard shared' : '')
       + (rec.length ? (anon ? ' · recorded' : ` · ${listed(rec.sort(byName))} record${rec.length === 1 ? 's' : ''}`) : '');

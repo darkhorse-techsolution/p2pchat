@@ -6,7 +6,7 @@
 // stream or on two.
 //
 // Reads from app.js: S, toast, contact, ipcErr, renderContacts. Reads at call time: K.tune, K.paint,
-// K.paintStats, K.viewer, K.rec, K.cast, K.control and K.clip.
+// K.paintStats, K.viewer, K.rec, K.cast, K.control, K.clip and K.unattended.
 (() => {
   const K = window.ShareKit;
   const newSid = () => Math.random().toString(36).slice(2, 12);
@@ -231,6 +231,7 @@
     if (ev.mode === 'two' && ev.screen && !sess.screenTrack && !sess.askedBack) { sess.askedBack = true; K.viewer.askBack(sess); }
     if (!ev.screen && !ev.mic && !sess.screenTrack && !sess.micTrack) { close(sess, 'stopped'); return; }
     K.rec.sync(sess); K.paint(); renderContacts();
+    if (K.unattended) K.unattended.maybeAsk(sess);   // I connected to their machine with its password: control is asked for once their screen is here
   }
   function onStatus(ev) {
     const sess = map.get(ev.pub);
@@ -251,7 +252,7 @@
     if (!m || typeof m !== 'object') return;
     sess.ctl.recv++;
     if (!types.has(m.t)) return;
-    if (m.t === 'cast') K.cast.onTold(sess, m); else if (m.t === 'clip') K.clip.onPart(sess, m); else if (m.t === 'clipoff') K.clip.off(sess, 'peer'); else K.control.onMessage(sess, m);
+    if (m.t === 'cast') { K.cast.onTold(sess, m); if (K.unattended) K.unattended.maybeAsk(sess); } else if (m.t === 'clip') K.clip.onPart(sess, m); else if (m.t === 'clipoff') K.clip.off(sess, 'peer'); else K.control.onMessage(sess, m);
   }
   function adoptChannel(sess, ch, theirs) {
     const types = TYPES.get(ch.label);
@@ -259,7 +260,7 @@
     if (theirs && ch.label === 'clip' && !sess.ctl.askedClip && !sess.ctl.takeClip) return;
     ch.onmessage = (e) => onMessage(sess, types, e.data);
     ch.onerror = (e) => console.warn('channel', ch.label, e.error ? e.error.message : e);
-    if (ch.label === 'ctl') ch.addEventListener('open', () => K.cast.tell(sess));   // a viewer hears how many watch as soon as it can be told
+    if (ch.label === 'ctl') ch.addEventListener('open', () => { K.cast.tell(sess); if (K.unattended) K.unattended.maybeAsk(sess); });   // a viewer hears how many watch as soon as it can be told
     if (ch.label === 'ctl' && !sess.ctl.dc) sess.ctl.dc = ch;
     if (ch.label === 'move' && !sess.ctl.mv) sess.ctl.mv = ch;
     if (ch.label === 'clip') {   // one per clipboard link: the slot is free again once its channel is closing, and a channel that closes takes its link with it

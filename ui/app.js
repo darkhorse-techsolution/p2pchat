@@ -311,8 +311,25 @@ async function openInfo() {
   $('infoName').textContent = c.name; $('infoAddr').textContent = `${c.host}:${c.port} · ${c.status}`;
   $('infoSafety').textContent = c.safetyNumber; $('infoVerified').checked = c.verified; $('infoRename').value = c.name;
   $('infoHistory').disabled = c.status !== 'online'; $('infoHistory').title = c.status === 'online' ? 'Ask the peer to send their copy of this conversation' : 'Peer must be online: history comes from their device, not a server';
+  $('infoUaPass').value = ''; renderUa(c.ua);
   show('mInfo');
 }
+// Unattended access for this contact: on only once a password is set, off the moment the box is unticked.
+const uaDate = (ms) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+function renderUa(ua, open) {
+  const on = !!(ua && ua.on);
+  $('infoUa').checked = on || !!open; $('infoUaBox').classList.toggle('hidden', !on && !open);
+  $('infoUaSave').textContent = on ? 'Change password' : 'Set password';
+  $('infoUaNote').textContent = on ? `On since ${uaDate(ua.set)}. Last connected: ${ua.last ? uaDate(ua.last) : 'never'}.` : 'Not on yet: it starts when you set a password.';
+}
+$('infoUa').onchange = async (e) => {
+  if (e.target.checked) { renderUa(null, true); $('infoUaPass').focus(); return; }
+  try { renderUa(await window.api.uaClear(S.current)); toast('Unattended access is off for this contact'); } catch (err) { toast(ipcErr(err), 'err'); }
+};
+$('infoUaSave').onclick = async () => {
+  try { renderUa(await window.api.uaSet(S.current, $('infoUaPass').value)); $('infoUaPass').value = ''; toast('Unattended access is on for this contact', 'ok'); } catch (err) { toast(ipcErr(err), 'err'); }
+};
+$('infoUaPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('infoUaSave').click(); } });
 $('btnInfo').onclick = openInfo; $('btnMore').onclick = openInfo;
 $('infoVerified').onchange = async (e) => { await window.api.setVerified(S.current, e.target.checked); };
 $('infoRename').onchange = async (e) => { if (e.target.value.trim()) await window.api.renameContact(S.current, e.target.value.trim()); };
@@ -475,6 +492,7 @@ window.api.onEvent(async (ev) => {
     case 'control': if (window.Share) window.Share.onControl(ev); break;
     case 'cursor': if (window.Share) window.Share.onCursor(ev); break;
     case 'clip': if (window.Share) window.Share.onClip(ev); break;
+    case 'unattended': if (window.Share) window.Share.onUnattended(ev); break;
     case 'shown': input.focus(); if (window.Share) window.Share.onShown(); if (S.current && (contact(S.current)?.unread || 0) > 0) select(S.current); break;
   }
 });

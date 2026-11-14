@@ -13,6 +13,8 @@ const { createGrant } = require('./grant.js');
 const { createClipLink } = require('./clip.js');
 const { createSharePops } = require('./sharepop.js');
 const { createCaptioner } = require('./caption.js');
+const { createUnattended } = require('./unattended.js');
+const { createAccessCard } = require('./accesscard.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -101,7 +103,8 @@ const captureSupport = () =>
   : isMac ? { supported: true, how: 'NSWindow sharingType = none' }
   : isWin ? { supported: true, how: 'SetWindowDisplayAffinity' }
   : { supported: false, how: 'Linux has no API to exclude a window from capture (X11 lets any client read any window; the Wayland screenshot portal captures everything), so this window IS capturable' };
-const applyProtection = (win) => { if (!win.isDestroyed()) win.setContentProtection(protectionOn); };
+// The unattended-access notice is the one window that stays in the picture (main/accesscard.js).
+const applyProtection = (win) => { if (!win.isDestroyed()) win.setContentProtection(protectionOn && !accessCard.owns(win)); };
 app.on('browser-window-created', (_e, win) => applyProtection(win));
 
 // --- vault key, wrapped by the OS keychain -----------------------------------
@@ -418,6 +421,7 @@ handle('state', () => ({
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
   recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE }, keysRemote,
+  unattended: { live: uaLive.length, card: accessCard.status(), ...unattended.status() },
   caption: { present: captioner.assetsPresent(), ready: captioner.isReady() },
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
@@ -427,7 +431,7 @@ handle('addContact', (_e, invite) => contactView(engine.addContact(invite)));
 handle('removeContact', (_e, pub) => { engine.removeContact(pub); return true; });
 handle('renameContact', (_e, pub, name) => { engine.renameContact(pub, name); store.upsertContact(pub, { renamed: true }); return true; });
 handle('setVerified', (_e, pub, v) => { engine.setVerified(pub, v); return true; });
-handle('contact', (_e, pub) => { const c = store.contact(pub); return c ? { ...contactView(c), safetyNumber: engine.safetyNumber(pub) } : null; });
+handle('contact', (_e, pub) => { const c = store.contact(pub); return c ? { ...contactView(c), safetyNumber: engine.safetyNumber(pub), ua: unattended.view(c.pub) } : null; });
 handle('conversation', (_e, pub) => { store.clearUnread(pub); return store.conv(pub).messages.map((m) => msgView(pub, m)); });
 handle('conversationPeek', (_e, pub) => store.conv(pub).messages.map((m) => msgView(pub, m))); // a refresh, not a read: unread stays
 handle('send', (_e, pub, m) => engine.sendMessage(pub, m));
@@ -544,6 +548,49 @@ handle('clipStart', (_e, o) => {
 handle('clipPoke', (_e, id) => { clip.poke(String(id)); return true; });
 handle('clipApply', (_e, id, text) => clip.apply(String(id), text));
 handle('clipStop', (_e, id) => { if (clip.status().id === String(id)) clip.stop('renderer'); return true; });
+// --- unattended access --------------------------------------------------------------
+// A contact that the owner of this machine picked may start a share of this screen, and control of it,
+// with nobody here: the owner sets a password for that contact in its info, and the contact shows it
+// (main/unattended.js has the gate). The share and the control are the ordinary ones, started by the
+// page. For as long as the page says that anyone is connected that way, a notice stays on the screen
+// (main/accesscard.js); if the notice cannot be shown or goes away, the page is told to end those sessions.
+let uaLive = [];   // the contacts the page says are connected unattended right now
+const accessCard = createAccessCard({ BrowserWindow, ipcMain, screen, preload: path.join(__dirname, 'access-preload.js'), page: path.join(__dirname, '..', 'ui', 'access.html'), isMac, isLinux, log,
+  onStop: () => push('unattended', { op: 'stop' }), onGone: () => { uaLive = []; push('unattended', { op: 'stop' }); } });
+const endUnattended = () => { uaLive = []; accessCard.hide(); };   // the page that held those sessions is gone
+// The page starts the share. Nobody clicks for this capture: Electron 45 starts one without a user
+// gesture (run on Linux), and the call carries one for a Chromium that asks for it. An answer that
+// does not come in time counts as no, and the page is told to stop.
+async function startUnattended(pub) {
+  if (!win || win.isDestroyed()) return { ok: false, why: 'unavailable' };
+  let timer;
+  const late = new Promise((res) => { timer = setTimeout(() => res({ ok: false, why: 'capture', late: true }), 30000); });
+  const r = await Promise.race([win.webContents.executeJavaScript(`window.Share.unattended(${JSON.stringify(String(pub))})`, true), late]).finally(() => clearTimeout(timer));
+  if (r && r.late) push('unattended', { op: 'stop', pub });
+  return r && typeof r === 'object' ? { ok: r.ok === true, why: String(r.why || '') } : { ok: false, why: 'capture' };
+}
+const unattended = createUnattended({
+  store: { contact: (pub) => store.contact(pub), upsertContact: (pub, fields) => store.upsertContact(pub, fields) },
+  me: () => engine.me.pub.toString('base64url'),
+  send: (pub, f) => engine.sendUa(pub, f),
+  // macOS shares a screen only once Screen Recording is allowed and the app was started after that
+  ready: () => (!win || win.isDestroyed() ? 'unavailable' : isMac && (screenPermission() !== 'granted' || screenPermAtBoot !== 'granted') ? 'perm' : ''),
+  start: startUnattended,
+  stop: (pub) => push('unattended', { op: 'stop', pub }),
+  notify: (ev) => push('unattended', { op: 'note', ...ev }),
+  log,
+});
+handle('uaSet', (_e, pub, password) => unattended.setPassword(String(pub || ''), typeof password === 'string' ? password : ''));
+handle('uaClear', (_e, pub) => unattended.clear(String(pub || '')));
+handle('uaConnect', (_e, pub, password) => unattended.connect(String(pub || ''), typeof password === 'string' ? password.slice(0, 1024) : ''));
+handle('uaLive', (_e, o) => {
+  const pubs = Array.isArray(o && o.pubs) ? o.pubs.filter((p) => typeof p === 'string' && !!store.contact(p)).slice(0, 8) : [];
+  if (pubs.length !== uaLive.length) log.info('unattended access: connected now', pubs.length);
+  uaLive = pubs;
+  if (pubs.length) accessCard.show({ text: String((o && o.text) || ''), theme: popupTheme(), display: sharedDisplay && screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) });
+  else accessCard.hide();
+  return pubs.length;
+});
 // Recording an incoming share: the renderer's MediaRecorder streams WebM pieces here and they
 // are appended, in order, to a plain file in the Videos folder. Deliberately not in the vault:
 // a recording is for playing in any player. Files are created exclusively and never reused.
@@ -690,6 +737,8 @@ async function boot() {
   for (const ev of ['contact', 'status', 'update', 'history', 'typing', 'error', 'info', 'discovered', 'relay', 'share']) engine.on(ev, (d) => push(ev, d));
   const sharePops = createSharePops();
   engine.on('share', (f) => { if (sharePops.wants(f)) showPopup({ pub: f.pub, name: store.contact(f.pub)?.name || 'A contact', text: '', kind: 'share' }); });
+  engine.on('ua', (f) => unattended.onFrame(f));
+  engine.on('status', (d) => { if (d.status === 'offline') unattended.onOffline(d.pub); });
   engine.on('message', ({ pub, msg }) => push('message', { pub, msg: msgView(pub, msg) }));
   // After sleep the relay link and peer sockets are usually dead without saying so.
   powerMonitor.on('resume', () => engine.kick());
@@ -726,7 +775,7 @@ async function boot() {
   });
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   // a reload: the page that held the share and the grant is gone, whatever it was doing
-  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); setKeysRemote(false); sharedDisplay = null; } });
+  win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); setKeysRemote(false); sharedDisplay = null; endUnattended(); } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // A screen share offers only the interface the OS routes traffic through, not every one it has. A server
   // with Docker had 36 bridge networks, all private and unreachable from outside: the peer tried each and the
@@ -750,7 +799,7 @@ async function boot() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.on('console-message', (d) => { if (d.level === 'error' || !PROD) logLine(d.level === 'error' ? 'ERROR' : 'INFO', ['renderer', d.message, d.sourceId, d.lineNumber]); });
   win.webContents.on('preload-error', (_e, p, err) => log.error('preload', p, err));
-  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); setKeysRemote(false); sharedDisplay = null; if (d.reason !== 'clean-exit') win.webContents.reload(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); setKeysRemote(false); sharedDisplay = null; endUnattended(); if (d.reason !== 'clean-exit') win.webContents.reload(); });
   if (isWin) win.setSkipTaskbar(true);
   log.info('window created');
   applyProtection(win);
@@ -758,7 +807,7 @@ async function boot() {
   if (isMac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // once, before the first show
   win.on('close', (e) => { if (!quitting && BACKGROUND_APP && (hotkeyOk || tray)) { e.preventDefault(); hideWindow(); } else { quitting = true; } });
   // A background app can outlive its window. With the window goes the page that held the share: no grant, no clipboard link (and its poll) and no key routing is left without one.
-  win.on('closed', () => { endGrant('window closed'); clip.stop('window closed'); setKeysRemote(false); sharedDisplay = null; });
+  win.on('closed', () => { endGrant('window closed'); clip.stop('window closed'); setKeysRemote(false); sharedDisplay = null; endUnattended(); });
   win.on('hide', () => { log.info('window hide event'); push('hidden'); });
   win.on('leave-full-screen', () => { viewerFull = false; setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
   // Elsewhere than on macOS the window is in full screen a moment after the viewer asked for it. The page asks
@@ -795,7 +844,7 @@ async function boot() {
   applyMode(settings().mode || 'overlap');
 }
 
-app.on('before-quit', () => { quitting = true; clip.stop('quit'); control.stop('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); });
+app.on('before-quit', () => { quitting = true; clip.stop('quit'); control.stop('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); accessCard.hide(); });
 app.on('will-quit', () => { if (engine) engine.stop(); });
 app.on('window-all-closed', () => { if (!BACKGROUND_APP) app.quit(); });
 app.on('activate', showWindow);

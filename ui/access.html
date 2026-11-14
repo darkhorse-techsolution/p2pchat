@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="theme.css">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; user-select: none; }
+  html[data-solid] body { background: var(--panel); }
+  .card { margin: 6px; padding: 10px 12px 10px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--bad); box-shadow: var(--shadow); display: flex; gap: 12px; align-items: center; }
+  html[data-solid] .card { box-shadow: none; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); flex: none; animation: blink 1.4s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+  .body { min-width: 0; flex: 1; }
+  .title { font-weight: 700; color: var(--bad); }
+  .text { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button { font: inherit; font-weight: 600; color: var(--on-accent); background: var(--bad); border: 1px solid var(--bad); border-radius: 9px; padding: 7px 12px; cursor: pointer; flex: none; }
+  button:active { transform: translateY(1px); }
+</style>
+</head>
+<body>
+<div class="card">
+  <span class="dot"></span>
+  <div class="body"><div class="title">Unattended access</div><div class="text" id="text"></div></div>
+  <button id="stop">Disconnect</button>
+</div>
+<script src="access.js"></script>
+</body>
+</html>

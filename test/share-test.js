@@ -754,14 +754,15 @@ const idle = async () => { for (let i = 0; i < 25; i++) await tick(); };
 // The whole share code of the page (every file of ui/share and ui/share.js) over elements that only keep
 // what is set on them: for what the paint writes and what window.Share answers.
 function pageWorld(extra = {}) {
-  const w = { els: new Map(), toasts: [], timers: [], sent: [], S: { me: { pub: 'me' }, current: null, contacts: [], settings: {}, capture: { supported: true }, protection: true } };
+  const w = { els: new Map(), toasts: [], timers: [], sent: [], live: [], connect: async () => ({ ok: true }), S: { me: { pub: 'me' }, current: null, contacts: [], settings: {}, capture: { supported: true }, protection: true } };
   w.$ = (id) => { if (!w.els.has(id)) { const cls = new Set(); w.els.set(id, { id, textContent: '', title: '', className: '', disabled: false, checked: false, style: {}, dataset: {}, srcObject: null, classList: { contains: (c) => cls.has(c), add: (c) => cls.add(c), remove: (c) => cls.delete(c), toggle: (c, on) => { if (on === undefined ? !cls.has(c) : on) cls.add(c); else cls.delete(c); } },
     querySelectorAll: () => [], querySelector: () => null, addEventListener() {}, removeEventListener() {}, requestVideoFrameCallback() {}, focus() {}, play: async () => {}, appendChild() {}, append() {}, remove() {} }); } return w.els.get(id); };
-  w.K = load(['kit.js', 'tune.js', 'session.js', 'cast.js', 'control.js', 'clip.js', 'record.js', 'viewer.js', '../share.js'], { $: w.$, S: w.S, toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), renderContacts() {}, closeLightbox() {}, show() {}, closeModal() {},
+  w.K = load(['kit.js', 'tune.js', 'session.js', 'cast.js', 'control.js', 'clip.js', 'record.js', 'viewer.js', 'unattended.js', '../share.js'], { $: w.$, S: w.S, toast: (t) => w.toasts.push(t), ipcErr: (e) => String((e && e.message) || e), renderContacts() {}, closeLightbox() {}, show() {}, closeModal() {},
     contact: (pub) => w.S.contacts.find((c) => c.pub === pub), document: { getElementById: w.$, addEventListener() {}, createElement: () => w.$('made' + w.els.size), body: w.$('body') }, addEventListener() {}, performance: { now: () => 0 },
     setTimeout: (fn, ms) => { const t = { fn, ms, on: true }; w.timers.push(t); return t; }, clearTimeout: (t) => { if (t) t.on = false; }, setInterval: () => 0, clearInterval() {},
     MediaStream: class { constructor() { this.t = []; } addTrack(t) { this.t.push(t); } removeTrack() {} },
-    api: { share: async (pub, f) => { w.sent.push(`${pub}:${f.op}`); return true; }, iceConfig: async () => ({ iceServers: [] }), controlRevoke: async () => true, log: async () => true, keysRemote: async () => false, fullscreen: async (on) => on, captureEnded: async () => true, recordStop: async () => null }, ...extra });
+    api: { share: async (pub, f) => { w.sent.push(`${pub}:${f.op}`); return true; }, iceConfig: async () => ({ iceServers: [] }), controlRevoke: async () => true, log: async () => true, keysRemote: async () => false, fullscreen: async (on) => on, captureEnded: async () => true, recordStop: async () => null,
+      uaLive: async (o) => { w.live.push(o); return o.pubs.length; }, uaConnect: (pub, pass) => w.connect(pub, pass) }, ...extra });
   w.Share = pages.get(w.K).Share;
   // a session as session.js makes one, put into the registry by hand: `out` says my screen goes to that contact
   w.sess = (pub, out, theirs = false) => { const x = { pub, id: 's-' + pub, pc: null, closed: false, peerSids: new Set(), statsTimer: null, connectTimer: null, markSeen() {}, ready: Promise.resolve(), inbox: Promise.resolve(), seen: true, everConnected: true, screenTrack: out ? { stop() {}, contentHint: '' } : null, micTrack: null, screenSender: null, micSender: null, local: {}, mode: 'one', rec: null, stats: '',
@@ -1092,15 +1093,106 @@ function pageWorld(extra = {}) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8').split('\n'), line = (re) => (src.find((x) => re.test(x)) || '').trim();
   const run = (text, fire) => {
     const calls = [], lis = {}, on = (n, f) => { lis[n] = f; };
-    const ctx = vm.createContext({ calls, sharedDisplay: { id: 1 }, log: { error() {}, info() {} }, endGrant: (why) => { calls.push('grant ended'); return null; }, clip: { stop: () => calls.push('clipboard link stopped') }, setKeysRemote: (v) => calls.push(`keys remote ${v}`),
+    const ctx = vm.createContext({ calls, sharedDisplay: { id: 1 }, log: { error() {}, info() {} }, endGrant: (why) => { calls.push('grant ended'); return null; }, clip: { stop: () => calls.push('clipboard link stopped') }, setKeysRemote: (v) => calls.push(`keys remote ${v}`), endUnattended: () => calls.push('unattended notice down'),
       win: { on, webContents: { on, reload() {} } } });
     if (!text) return 'no such handler';
     vm.runInContext(text + '\nthis.left = () => sharedDisplay;', ctx); fire(lis);
     return calls.concat(ctx.left() === null ? ['shared display forgotten'] : []).join(', ');
   };
-  const all = 'grant ended, clipboard link stopped, keys remote false, shared display forgotten';
-  ok('V9 a page that died ends all four', run(line(/webContents\.on\('render-process-gone'/), (l) => l['render-process-gone']({}, { reason: 'clean-exit' })) === all);
-  ok('V9 a window that was closed ends the same four', run(line(/win\.on\('closed'/), (l) => l.closed()) === all);
+  const all = 'grant ended, clipboard link stopped, keys remote false, unattended notice down, shared display forgotten';
+  ok('V9 a page that died ends all five', run(line(/webContents\.on\('render-process-gone'/), (l) => l['render-process-gone']({}, { reason: 'clean-exit' })) === all);
+  ok('V9 a window that was closed ends the same five', run(line(/win\.on\('closed'/), (l) => l.closed()) === all);
+}
+
+// A1: a contact that is connected unattended gets control without the dialog; anyone else still gets the dialog
+{
+  (async () => {
+    const w = controlWorld(), C = w.K.control, bob = w.sess('bob'), cy = w.sess('cy'), hosted = new Set(['bob']);
+    const said = []; w.K.unattended = { hosts: (pub) => hosted.has(pub), said: (pub, why) => said.push(`${pub}:${why}`) };
+    w.from(bob, { t: 'req', clip: 1 }); await tick();
+    ok('A1 hosted: no dialog, main is asked for the grant at once, with the clipboard they offered', w.dialogs.length === 0 && w.grants.length === 1 && w.grants[0].pub === 'bob' && w.grants[0].clip === true && !!C.owner && C.owner.sess === bob && C.pending === null);
+    w.from(cy, { t: 'req' });
+    ok('A1 a second viewer meanwhile is told busy', w.sent.some((s) => s === 'cy:' + JSON.stringify({ t: 'ctl', on: false, why: 'busy' })) && w.dialogs.length === 0);
+    w.grants[0].res({ ok: true, token: 'tok' }); await tick();
+    ok('A1 the grant arrives: control is on, they are told, and the outcome is noted for the log', bob.ctl.give === 'on' && w.sent.includes('bob:' + JSON.stringify({ t: 'ctl', on: true, clip: 1 })) && js(said) === '["bob:"]');
+    C.endGive(bob, 'stopped');
+    w.from(bob, { t: 'req' }); await tick();
+    ok('A1 after Stop control a hosted contact that asks again is allowed again: no dialog, no cooldown, no clipboard it did not offer', w.dialogs.length === 0 && w.grants.length === 2 && w.grants[1].clip === false);
+    w.grants[1].res({ ok: true, token: 'tok2' }); await tick(); C.endGive(bob, 'stopped');
+    hosted.clear();
+    w.from(bob, { t: 'req' });
+    ok('A1 no longer hosted: the dialog is back and nothing is granted by itself', w.dialogs.length === 1 && w.grants.length === 2 && !!C.pending && C.pending.sess === bob);
+    const v = controlWorld(), D = v.K.control, dee = v.sess('dee');
+    v.K.unattended = { hosts: () => true, said() {} }; dee.screenTrack = null;
+    v.from(dee, { t: 'req' });
+    ok('A1 hosted but my screen does not go to them: nothing to control', v.grants.length === 0 && D.owner === null && v.sent.includes('dee:' + JSON.stringify({ t: 'ctl', on: false, why: 'notsharing' })));
+  })().catch((e) => { console.log('FAIL  A1 threw:', e.stack); process.exitCode = 1; });
+}
+
+// A2: the page's part of unattended access on the machine that is accessed
+{
+  (async () => {
+    const w = pageWorld(), K = w.K, U = K.unattended, adds = [];
+    const bob = w.sess('bob', true); K.cast.members.delete('bob');
+    K.cast.add = async (pub, mode, opts) => { adds.push({ pub, mode, opts }); K.cast.members.set(pub, { state: 'live', mode, timer: null, back: null }); return true; };
+    const r = await w.Share.unattended('bob');
+    ok('A2 start: my screen goes to that contact one way, without the microphone', r.ok === true && js(adds) === js([{ pub: 'bob', mode: 'one', opts: { mic: false } }]) && U.hosts('bob'));
+    ok('A2 main is told who is connected, by name while that contact is the whole audience', w.live.length === 1 && js(w.live[0].pubs) === '["bob"]' && w.live[0].text.startsWith('Bob sees this screen'));
+    bob.pc = { connectionState: 'connected', close() {} }; w.S.current = 'bob'; K.paint();
+    ok('A2 the pill of that chat says unattended, and telling main again changes nothing', /unattended/.test(w.$('sharePill').textContent) && w.live.length === 1);
+    ok('A2 a contact that is not known here is not started', (await U.start('nobody')).ok === false && adds.length === 1);
+    const cy = w.sess('cy', true); K.paint();
+    ok('A2 with anyone else watching the notice names nobody', w.live.length === 2 && w.live[1].text.startsWith('A contact sees this screen'));
+    K.capture.state = 'live';
+    K.sessions.close(bob, 'offline');
+    ok('A2 a hosted contact that goes offline is out, not kept as reconnecting, and main is told', !K.cast.members.has('bob') && !U.hosts('bob') && js(w.live[w.live.length - 1]) === js({ pubs: [], text: '' }));
+    K.sessions.close(cy, 'offline');
+    ok('A2 ... while an ordinary viewer is kept as away', !!K.cast.members.get('cy') && K.cast.members.get('cy').state === 'away');
+    const dee = w.sess('dee', true); dee.local = { removeTrack() {} }; K.cast.members.delete('dee');
+    await U.start('dee');
+    w.Share.onUnattended({ op: 'stop' });
+    ok('A2 Disconnect on the notice ends the unattended share and leaves the others', !K.cast.members.has('dee') && !U.hosts('dee') && K.cast.members.has('cy') && dee.screenTrack === null);
+    let release; K.cast.add = () => new Promise((res) => { release = () => res(true); });
+    w.sess('eve', false);
+    const p = U.start('eve');
+    ok('A2 a second start for the same contact meanwhile is busy', (await U.start('eve')).why === 'busy');
+    w.Share.onUnattended({ op: 'stop', pub: 'eve' }); release();
+    const r3 = await p;
+    ok('A2 switched off while the capture was starting: answered off, not hosted', r3.ok === false && r3.why === 'off' && !U.hosts('eve'));
+    for (const n of ['f1', 'f2', 'f3', 'f4']) K.cast.members.set(n, { state: 'live', mode: 'one', timer: null, back: null });
+    w.S.contacts.push({ pub: 'gus', name: 'Gus', status: 'online' });
+    ok('A2 a full audience: busy, and nothing is started', (await U.start('gus')).why === 'busy');
+  })().catch((e) => { console.log('FAIL  A2 threw:', e.stack); process.exitCode = 1; });
+}
+
+// A3: I connected to a contact's machine: control is asked for by itself, once, when their screen and the control channel are both here
+{
+  (async () => {
+    const w = pageWorld({ openModal: null }), K = w.K, U = K.unattended, asks = [];
+    const bob = w.sess('bob', false, false);
+    K.control.ask = (sess) => asks.push(sess.pub);
+    w.connect = async (pub, pass) => { w.tried = { pub, pass }; return { ok: true }; };
+    U.openDialog('bob'); w.$('uaPass').value = 'the password'; w.$('uaCtl').checked = true;
+    await w.$('uaGo').onclick();
+    ok('A3 the dialog hands contact and password to main and empties the field', js(w.tried) === js({ pub: 'bob', pass: 'the password' }) && w.$('uaPass').value === '');
+    ok('A3 nothing is asked while their screen is not here', asks.length === 0 && js(U.wanted()) === '["bob"]');
+    bob.remote.screen = true; U.maybeAsk(bob);
+    ok('A3 ... nor while the control channel is not open', asks.length === 0);
+    bob.ctl.dc = { readyState: 'open' }; U.maybeAsk(bob); U.maybeAsk(bob);
+    ok('A3 screen and channel both here: control is asked for, once', js(asks) === '["bob"]' && U.wanted().length === 0);
+    w.connect = async () => ({ ok: false, why: 'locked', wait: 600 });
+    U.openDialog('bob'); w.$('uaPass').value = 'x'; await w.$('uaGo').onclick();
+    ok('A3 a refusal is said in the dialog, with the wait, and control is no longer wanted', /Try again in 10 min/.test(w.$('uaErr').textContent) && U.wanted().length === 0);
+    w.connect = async () => ({ ok: false, why: '__proto__' });
+    w.$('uaPass').value = 'x'; await w.$('uaGo').onclick();
+    ok('A3 a reason that is not in the table is not looked up in it', w.$('uaErr').textContent === 'Could not connect.');
+    w.$('uaCtl').checked = false; w.connect = async () => ({ ok: true });
+    w.$('uaPass').value = 'x'; await w.$('uaGo').onclick(); U.maybeAsk(bob);
+    ok('A3 with the control box unticked nothing is asked', asks.length === 1 && U.wanted().length === 0);
+    w.$('uaPass').value = ''; w.tried = null; w.connect = async (pub, pass) => { w.tried = { pub, pass }; return { ok: true }; };
+    await w.$('uaGo').onclick();
+    ok('A3 an empty password is not sent', w.tried === null && /Enter the password/.test(w.$('uaErr').textContent));
+  })().catch((e) => { console.log('FAIL  A3 threw:', e.stack); process.exitCode = 1; });
 }
 
 // P1: one pop-up per incoming share, per contact
