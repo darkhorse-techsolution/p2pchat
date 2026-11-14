@@ -1,9 +1,10 @@
 'use strict';
 // The notice that stays on this machine's screen for as long as a contact is connected to it
 // unattended (main/unattended.js): a small window at the bottom of the shared display, above every
-// other window, that says who is connected and has a Disconnect button. It is the one window of the
-// app that is never hidden from screen capture: whoever is connected sees it in the picture as well,
-// so nobody clicks a button they cannot see.
+// other window, that says who is connected and has a Disconnect button. It stays on the real screen
+// for the whole session, so the person at this machine always sees it; it is capture-blocked like the
+// rest of the app (main/main.js applyProtection), so it is left out of screenshots, recordings and the
+// screen the connected contact receives, the same as the chat window.
 //
 // The session depends on the notice, not the other way round: if the window cannot be shown or goes
 // away while a session runs, `onGone` ends the session.
@@ -27,8 +28,7 @@ function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac
       acceptFirstMouse: true,                             // macOS: the window never has the focus, and a click on Disconnect must still be a click
       title: 'P2P Chat: unattended access', webPreferences: { preload, contextIsolation: true, nodeIntegration: false, sandbox: true, devTools: false },
     });
-    const w = card;
-    w.setContentProtection(false);                        // in the picture on purpose (see above)
+    const w = card;                                       // capture protection is applied by main.js (browser-window-created), like every window
     w.setAlwaysOnTop(true, 'screen-saver');
     w.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     w.webContents.on('will-navigate', (e) => e.preventDefault());
@@ -53,7 +53,7 @@ function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac
     const w = card; card = null;
     if (w && !w.isDestroyed()) w.destroy();
   }
-  return { show, hide, owns: (w) => !!card && w === card, isUp: () => live && !!card && !card.isDestroyed(), status: () => ({ up: live && !!card && !card.isDestroyed(), visible: !!card && !card.isDestroyed() && card.isVisible(), text: last ? last.text : '', bounds: card && !card.isDestroyed() ? card.getBounds() : null }) };
+  return { show, hide, isUp: () => live && !!card && !card.isDestroyed(), status: () => ({ up: live && !!card && !card.isDestroyed(), visible: !!card && !card.isDestroyed() && card.isVisible(), text: last ? last.text : '', bounds: card && !card.isDestroyed() ? card.getBounds() : null }) };
 }
 
 module.exports = { createAccessCard };

@@ -103,8 +103,7 @@ const captureSupport = () =>
   : isMac ? { supported: true, how: 'NSWindow sharingType = none' }
   : isWin ? { supported: true, how: 'SetWindowDisplayAffinity' }
   : { supported: false, how: 'Linux has no API to exclude a window from capture (X11 lets any client read any window; the Wayland screenshot portal captures everything), so this window IS capturable' };
-// The unattended-access notice is the one window that stays in the picture (main/accesscard.js).
-const applyProtection = (win) => { if (!win.isDestroyed()) win.setContentProtection(protectionOn && !accessCard.owns(win)); };
+const applyProtection = (win) => { if (!win.isDestroyed()) win.setContentProtection(protectionOn); };
 app.on('browser-window-created', (_e, win) => applyProtection(win));
 
 // --- vault key, wrapped by the OS keychain -----------------------------------
