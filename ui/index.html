@@ -74,7 +74,8 @@
       <section class="viewer hidden" id="viewer">
         <video id="viewerVideo" autoplay playsinline tabindex="0"></video>
         <div class="viewer-captions hidden" id="viewerCaptions" aria-live="polite"></div>
-        <div class="viewer-bar">
+        <button class="viewer-tab" id="viewerTab" title="Show the toolbar. Drag it sideways if it is in the way.">⋯</button>
+        <div class="viewer-bar" id="viewerBar">
           <span class="viewer-name" id="viewerName"></span><span class="viewer-stats" id="viewerStats"></span><span class="viewer-aud" id="viewerAud"></span>
           <span class="spacer"></span>
           <button id="viewerMute" title="Mute their sound">🔊</button>
@@ -83,10 +84,14 @@
           <button id="viewerCtl" class="ctl" title="Ask to use their mouse and keyboard">🖱 Control</button>
           <button id="viewerClip" class="clip hidden" title="Clipboard text is shared both ways until control ends. Click to stop sharing the clipboard.">📋 Shared</button>
           <button id="viewerRec" class="rec" title="Record what you see and hear from them to a file">● Record</button>
+          <button id="viewerStopCtl" class="stop-ctl hidden" title="They are using your mouse and keyboard: click to stop that">✋ Stop control</button>
+          <button id="viewerPop" title="Open their screen in a window of its own">⧉</button>
           <button id="viewerFull" title="Full screen (Esc leaves, unless you are controlling their screen)">⤢</button>
           <button class="danger" id="viewerEnd" title="End the screen share for both">End</button>
+          <button id="viewerFold" class="fold" title="Hide the toolbar. The small tab at the top of the screen brings it back.">▴</button>
         </div>
       </section>
+      <div class="viewer-away hidden" id="viewerAway"><span id="viewerAwayText"></span><span class="spacer"></span><button id="viewerAwayShow">Show the window</button><button id="viewerAwayBack">Back into the chat</button></div>
       <div class="messages" id="messages"></div>
       <button class="jump hidden" id="jump">↓ New messages</button>
       <div class="typing hidden" id="typing"><span></span><span></span><span></span></div>

@@ -64,7 +64,7 @@
     else if (sess.rec && (!sess.recWanted || !sess.remote.screen)) stopRecording(sess);
   }
   function renderRec(sess) {
-    const b = $('viewerRec'), on = !!sess.rec; b.classList.toggle('on', on);
+    const b = K.el('viewerRec'), on = !!sess.rec; b.classList.toggle('on', on);
     b.textContent = on ? `● ${fmtClock(Date.now() - sess.rec.since)}${sess.rec.bytes ? ' · ' + fmtBytes(sess.rec.bytes) : ''}` : '● Record';
     b.title = on ? 'Stop recording (the file is kept)' : 'Record what you see and hear from them to a file';
   }

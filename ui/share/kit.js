@@ -20,6 +20,42 @@
   K.CLIP_PART = 4096;      // UTF-16 units of one part of a copied text on the clip channel
   K.CLIP_PARTS = 16;       // parts of one text at most
   K.nameOf = (pub) => contact(pub)?.name || 'Your contact';
+  // The viewer's elements can sit in another window's document (share/viewer.js moves the whole
+  // section there), where getElementById of this page no longer finds them. So each is looked up
+  // once, while it is still here, and kept.
+  const kept = new Map();
+  K.el = (id) => { let e = kept.get(id); if (!e) { e = $(id); if (e) kept.set(id, e); } return e; };
+  // An Electron accelerator ("Control+Super+Return") as something a key event can be held against.
+  // Needed where the page itself has the whole keyboard (full screen while I drive their screen): the
+  // OS never sees the modifiers then, so its own hotkey does not fire and the page has to know the combination.
+  const ACCEL_CODES = { return: ['Enter', 'NumpadEnter'], enter: ['Enter', 'NumpadEnter'], backspace: ['Backspace'], space: ['Space'], tab: ['Tab'], escape: ['Escape'], esc: ['Escape'], delete: ['Delete'], insert: ['Insert'],
+    up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'], home: ['Home'], end: ['End'], pageup: ['PageUp'], pagedown: ['PageDown'], plus: ['Equal', 'NumpadAdd'], minus: ['Minus', 'NumpadSubtract'] };
+  K.accel = (text, mac) => {
+    const a = { ctrl: false, meta: false, alt: false, shift: false, codes: [], key: '' };
+    for (const part of String(text || '').split('+')) {
+      const p = part.trim().toLowerCase();
+      if (!p) continue;
+      if (p === 'control' || p === 'ctrl') a.ctrl = true;
+      else if (p === 'command' || p === 'cmd' || p === 'super' || p === 'meta') a.meta = true;
+      else if (p === 'commandorcontrol' || p === 'cmdorctrl') { if (mac) a.meta = true; else a.ctrl = true; }
+      else if (p === 'alt' || p === 'option') a.alt = true;
+      else if (p === 'shift') a.shift = true;
+      else if (/^[a-z]$/.test(p)) a.codes = ['Key' + p.toUpperCase()];
+      else if (/^[0-9]$/.test(p)) a.codes = ['Digit' + p, 'Numpad' + p];
+      else if (/^f([1-9]|1[0-9]|2[0-4])$/.test(p)) a.codes = [p.toUpperCase()];
+      else if (Object.hasOwn(ACCEL_CODES, p)) a.codes = ACCEL_CODES[p];
+      else a.key = p;
+    }
+    return a.codes.length || a.key ? a : null;
+  };
+  K.accelHit = (e, a) => !!a && !!e.ctrlKey === a.ctrl && !!e.metaKey === a.meta && !!e.altKey === a.alt && !!e.shiftKey === a.shift
+    && (a.codes.length ? a.codes.includes(e.code) : String(e.key || '').toLowerCase() === a.key);
+  // which of this app's three hotkeys a key event is, if any
+  K.hotkeyOf = (e) => {
+    const mac = window.api.platform === 'darwin', set = S.settings || {};
+    for (const kind of ['fullHotkey', 'hotkey', 'modeHotkey']) if (K.accelHit(e, K.accel(set[kind], mac))) return kind;
+    return '';
+  };
   // True where this window is part of what a screen capture shows (Linux, the monitor build, blocking
   // switched off): what it says about the audience is then on every viewer's screen.
   K.capturable = () => !(S.capture && S.capture.supported && S.protection);
@@ -46,6 +82,7 @@
     for (const other of PROMPTS) if (other !== id && up(other)) K.unprompt(other);
     if (back && !up('mShareBack')) { back.askedBack = false; if (K.viewer.backFor === back) K.viewer.backFor = null; }
     show(id);
+    if (K.viewer.away && K.viewer.away()) window.api.viewerFront('chat').catch(() => {});   // their screen is in a window of its own: the chat, with this prompt, comes in front of it
     return true;
   };
   // Closes its own modal only. The app closes "the open modal", which is the one shown last: when

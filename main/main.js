@@ -15,6 +15,7 @@ const { createSharePops } = require('./sharepop.js');
 const { createCaptioner } = require('./caption.js');
 const { createUnattended } = require('./unattended.js');
 const { createAccessCard } = require('./accesscard.js');
+const { createKeyGrab } = require('./keygrab.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -291,6 +292,7 @@ function showWindow() {
   // No app.dock.hide() here: flipping the activation policy on an already visible
   // window makes macOS order it out again (seen as a stray 'hide' event, and twice
   // as a window that never appeared). The policy is set once, before the window exists.
+  if (viewerOpen()) { viewerWin.showInactive(); if (isWin) viewerWin.setSkipTaskbar(true); }   // a watched screen's own window comes back with the chat, behind it
   if (isOverlay()) { win.showInactive(); push('shown'); return; } // overlay never takes focus
   win.show();
   win.focus();
@@ -299,32 +301,37 @@ function showWindow() {
 
   push('shown');
 }
-function hideWindow() { log.info('hideWindow', new Error().stack.split('\n')[2]?.trim() || ''); if (win && !win.isDestroyed()) { setViewerFullscreen(false); win.hide(); } }
+function hideWindow() { log.info('hideWindow', new Error().stack.split('\n')[2]?.trim() || ''); if (win && !win.isDestroyed()) { setViewerFullscreen(false); if (viewerOpen()) viewerWin.hide(); win.hide(); } }
 function toggleWindow() {
   if (!win) return;
   if (isOverlay()) { win.isVisible() ? hideWindow() : showWindow(); return; } // never focused in overlay, so visibility alone decides
-  (win.isVisible() && win.isFocused()) ? hideWindow() : showWindow();
+  (win.isVisible() && (win.isFocused() || (viewerOpen() && viewerWin.isFocused()))) ? hideWindow() : showWindow();   // in front, in either of its windows: the key hides both
 }
 
 // Three global shortcuts: `hotkey` shows/hides, `modeHotkey` cycles the window mode, `fullHotkey`
 // toggles full screen for an incoming share (the renderer decides; nothing happens without one).
 const SHORTCUTS = { hotkey: () => toggleWindow(), modeHotkey: () => cycleMode(), fullHotkey: () => { if (win && !win.isDestroyed() && win.isVisible()) push('fullHotkey', {}); } };
+// One press can come twice: from the OS, and from the page when it holds the whole keyboard (full screen
+// while a contact's screen is driven: the OS may not see the combination then, so the page picks it out).
+const fired = { hotkey: 0, modeHotkey: 0, fullHotkey: 0 };
+const fire = (kind) => { const now = Date.now(); if (now - fired[kind] < 400) return false; fired[kind] = now; SHORTCUTS[kind](); return true; };
 function registerShortcut(kind, accel) {
   const current = settings()[kind];
   const others = Object.keys(SHORTCUTS).filter((k) => k !== kind).map((k) => settings()[k]);
   if (accel && others.includes(accel)) return { ok: false, error: 'already used by another hotkey', hotkey: current };
   if (current) globalShortcut.unregister(current);
   let ok = false, error = '';
-  try { ok = globalShortcut.register(accel, SHORTCUTS[kind]); if (!ok) error = 'that combination is taken by another app or the OS'; }
+  try { ok = globalShortcut.register(accel, () => fire(kind)); if (!ok) error = 'that combination is taken by another app or the OS'; }
   catch (e) { error = e.message; }
   if (!ok) {
-    if (current && current !== accel) { try { globalShortcut.register(current, SHORTCUTS[kind]); } catch {} }
+    if (current && current !== accel) { try { globalShortcut.register(current, () => fire(kind)); } catch {} }
     return { ok: false, error, hotkey: current };
   }
   settings()[kind] = accel; store.saveSoon();
   log.info(kind, 'registered', accel);
   tray?.setContextMenu(trayMenu());
   push('settings', settings());
+  grabSync();   // a key grab that runs lets this app's hotkeys through by name: it is told the new one
   return { ok: true, hotkey: accel };
 }
 const registerHotkey = (accel) => registerShortcut('hotkey', accel);
@@ -419,7 +426,8 @@ handle('state', () => ({
   backgroundApp: BACKGROUND_APP, hotkeyOk, defaultRelay: DEFAULT_RELAY, mode: settings().mode || 'overlap', modeHotkeyOk, defaults: { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY }, turn: turnCfg(),
   windowFlags: win && !win.isDestroyed() ? { alwaysOnTop: win.isAlwaysOnTop(), focusable: win.isFocusable(), fullscreen: isViewerFullscreen() } : null,
   popup: popup && !popup.isDestroyed() ? { visible: popup.isVisible(), focusable: popup.isFocusable(), alwaysOnTop: popup.isAlwaysOnTop(), bounds: popup.getBounds() } : null, opacity: clampOpacity(settings().opacity), opacitySupported: opacitySupported(), autostartSupported: isMac || isWin, version: app.getVersion(), packaged: PROD, logPath,
-  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE }, keysRemote,
+  recordingsDir: recordingsDir(), control: { ...control.status(), ...grant.status() }, clip: { ...clip.status(), fake: CLIP_FAKE }, keysRemote, keygrab: keygrab.status(),
+  viewer: { open: viewerOpen(), visible: viewerOpen() && viewerWin.isVisible(), focused: viewerOpen() && viewerWin.isFocused(), fullscreen: isViewerFullscreen(), htmlFullscreen: viewerFull, bounds: viewerOpen() ? viewerWin.getBounds() : null, title: viewerOpen() ? viewerWin.getTitle() : '' },
   unattended: { live: uaLive.length, card: accessCard.status(), ...unattended.status() },
   caption: { present: captioner.assetsPresent(), ready: captioner.isReady() },
   versions: { electron: process.versions.electron, node: process.versions.node },
@@ -468,37 +476,115 @@ handle('fetchImage', (_e, pub, id) => { engine.fetchImage(pub, String(id || ''))
 handle('share', (_e, pub, payload) => engine.sendShare(String(pub || ''), payload));
 handle('iceConfig', () => iceConfig());
 handle('micPermission', async () => { if (!isMac) return true; try { return await systemPreferences.askForMediaAccess('microphone'); } catch { return false; } });
-// --- share viewer: full screen and recording --------------------------------------
-// Full screen is the window itself, asked for by the viewer: simple fullscreen on macOS (no
-// Space switch, so it works for a Dock-less app and in every window mode), setFullScreen
-// elsewhere. Element fullscreen is not used (every page permission stays refused).
-function isViewerFullscreen() { return !!win && !win.isDestroyed() && (win.isFullScreen() || (isMac && win.isSimpleFullScreen())); }
-// While the viewer drives a contact's screen in full screen, the keys this app would take for itself go to
-// that screen with all the others: the page says when (keysRemote), and then the application menu's
-// shortcuts are not acted on and the opacity keys are not consumed, so the page gets them and sends them
-// on. Only in full screen, and off again whenever full screen ends, the window is hidden, or the page
-// reloads or dies. The three global hotkeys (show/hide, window mode, full screen) are not touched: they
-// stay this machine's. Keys the operating system keeps for itself never reach the app and are not asked for.
+// --- share viewer: its own window, full screen, the keys --------------------------------------
+// A watched screen can have a window for itself (ui/share/viewer.js): the chat's page opens an
+// about:blank window and moves the viewer into it. That window has no page of its own. It is driven by
+// the chat's page, which stays the one frame the IPC handlers answer. Main keeps its place on the
+// screen, shows and hides it with the chat, closes it only when the page says so, and gives it full screen.
+let viewerWin = null;
+const viewerOpen = () => !!viewerWin && !viewerWin.isDestroyed();
+const host = () => (viewerOpen() ? viewerWin : win);   // the window the viewer is in
+function viewerOptions() {
+  const b = settings().viewerBounds || {}, area = screen.getDisplayMatching(win.getBounds()).workArea;
+  const width = Math.min(area.width, Math.max(480, Number(b.width) || 1100)), height = Math.min(area.height, Math.max(320, Number(b.height) || 720));
+  const onScreen = Number.isFinite(b.x) && Number.isFinite(b.y) && screen.getAllDisplays().some((d) => b.x >= d.workArea.x - 40 && b.y >= d.workArea.y - 40 && b.x < d.workArea.x + d.workArea.width - 80 && b.y < d.workArea.y + d.workArea.height - 80);
+  return { width, height, ...(onScreen ? { x: Math.round(b.x), y: Math.round(b.y) } : {}), minWidth: 360, minHeight: 240, show: false, title: 'P2P Chat', backgroundColor: '#000000',
+    skipTaskbar: BACKGROUND_APP, minimizable: !BACKGROUND_APP,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, devTools: !PROD, backgroundThrottling: false } };
+}
+function adoptViewer(child) {
+  viewerWin = child;
+  const wc = child.webContents;
+  child.removeMenu();   // Windows and Linux: no menu bar of its own, so that Alt, which is theirs while I drive their screen, opens none
+  if (isMac) child.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  applyProtection(child);
+  wc.on('will-navigate', (e) => e.preventDefault());
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.on('will-attach-webview', (e) => e.preventDefault());
+  // Its close button asks the page, which takes the viewer back into the chat and then has the window closed (viewerClose).
+  child.on('close', (e) => { if (!quitting && viewerWin === child) { e.preventDefault(); push('viewerWin', { op: 'close' }); } });
+  child.on('closed', () => { if (viewerWin === child) { viewerWin = null; viewerFull = false; setKeysRemote(false); push('viewerWin', { op: 'gone' }); } });   // not closed from here: the page takes its viewer back
+  child.on('leave-full-screen', () => { if (host() === child) { viewerFull = false; setKeysRemote(false); push('fullscreen', { on: false }); } });
+  child.on('enter-full-screen', () => { if (host() === child && viewerFull) push('fullscreen', { on: true }); });
+  child.on('focus', grabSync); child.on('blur', grabSync);
+  let t = null;
+  const keep = () => { clearTimeout(t); t = setTimeout(() => { if (viewerWin === child && !child.isDestroyed() && !child.isFullScreen() && !(isMac && child.isSimpleFullScreen()) && !child.isMinimized()) { settings().viewerBounds = child.getBounds(); store.saveSoon(); } }, 600); };
+  child.on('resize', keep); child.on('move', keep);
+  if (win.isVisible()) { child.show(); if (isWin) child.setSkipTaskbar(true); }   // a share that arrives while the app is hidden opens its window hidden too; no taskbar button, like the chat (re-applied after every show)
+  log.info('viewer window opened');
+}
+function closeViewer(why) {
+  if (!viewerOpen()) { viewerWin = null; return false; }
+  setKeysRemote(false); viewerFull = false;
+  const w = viewerWin; viewerWin = null;
+  w.destroy();
+  log.info('viewer window closed', why);
+  if (why !== 'page') push('viewerWin', { op: 'gone' });   // a page that is still there (a navigation that was refused) takes its viewer back into the chat
+  return true;
+}
+handle('viewerClose', () => closeViewer('page'));
+// 'chat': a prompt opened in the chat while their screen is in a window of its own. Anything else: that window.
+handle('viewerFront', (_e, which) => {
+  const w = which === 'chat' ? win : viewerOpen() ? viewerWin : null;
+  if (!w || w.isDestroyed() || !win.isVisible() || (which === 'chat' && isOverlay())) return false;   // a hidden app stays hidden, and overlay never takes the focus
+  w.show(); w.focus();
+  if (isWin) w.setSkipTaskbar(true);
+  return true;
+});
+
+// Full screen is the window the viewer is in, asked for by the viewer. macOS: simple fullscreen (no
+// Space switch, so it works for a Dock-less app and in every window mode). Elsewhere: the page's
+// Fullscreen API on the whole document, because Chromium's keyboard lock, which gives the page the
+// Windows key and Alt+Tab, holds only in that kind of full screen. The call carries a user gesture, since
+// the hotkey gives the page none. A page that says no leaves the plain window full screen, where those
+// keys stay this machine's.
+function isViewerFullscreen() { const h = host(); return !!h && !h.isDestroyed() && (h.isFullScreen() || (isMac && h.isSimpleFullScreen())); }
+function pageFullscreen(h, on) {
+  const js = on ? 'document.documentElement.requestFullscreen().then(() => true, () => false)' : '(document.fullscreenElement ? document.exitFullscreen().then(() => true, () => false) : Promise.resolve(false))';
+  const plain = () => { if (!h.isDestroyed() && viewerFull === on && h.isFullScreen() !== on) h.setFullScreen(on); };
+  h.webContents.executeJavaScript(js, true).then((ok) => { if (!ok) { if (on) log.info('full screen: the page refused, plain window full screen instead'); plain(); } else if (!on) setTimeout(plain, 400); }, plain);
+}
+// While the viewer drives a contact's screen in full screen, the keys this app and this machine would take
+// for themselves go to that screen with all the others. The page says when (keysRemote), and then:
+// the application menu's shortcuts are not acted on and the opacity keys are not consumed, so the page gets
+// them and sends them on; on Windows and Linux the page holds Chromium's keyboard lock (ui/share/viewer.js);
+// on macOS, where Chromium has none, a key grab of this app's own runs for as long as that window has the
+// keyboard (main/keygrab.js). Only in full screen, and off again whenever full screen ends, the window is
+// hidden, or the page reloads or dies. The three global hotkeys (show/hide, window mode, full screen)
+// stay this machine's: the grab lets them through, and the page picks them out where it holds the keyboard.
 let keysRemote = false;
 let viewerFull = false;   // the viewer asked for full screen and the window has not left it since
+const keygrab = createKeyGrab({ log, helpersDir: path.join(app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked'), 'main', 'helpers'),
+  trusted: () => { try { return systemPreferences.isTrustedAccessibilityClient(false); } catch { return false; } },
+  ask: () => { try { systemPreferences.isTrustedAccessibilityClient(true); } catch {} },   // lists the app under Accessibility and shows the system prompt
+  onKey: (ev) => push('grabKey', ev), onNote: (state) => push('keygrab', { state }),
+  onHotkey: (kind) => { if (Object.hasOwn(SHORTCUTS, kind)) fire(kind); } });   // the grab saw one of this app's hotkeys go by: run here, in case macOS does not report it while the grab holds the modifiers
+function grabSync() {
+  if (!isMac) return;
+  const h = host();
+  keygrab.set(keysRemote && !!h && !h.isDestroyed() && h.isFocused(), { hotkey: settings().hotkey, modeHotkey: settings().modeHotkey, fullHotkey: settings().fullHotkey });
+}
 function setKeysRemote(on) {
   on = !!on && isViewerFullscreen();
   if (on === keysRemote) return on;
   keysRemote = on;
-  if (win && !win.isDestroyed()) win.webContents.setIgnoreMenuShortcuts(on);
+  for (const w of [win, viewerWin]) if (w && !w.isDestroyed()) w.webContents.setIgnoreMenuShortcuts(on && w === host());
   log.info('keysRemote', on);
+  grabSync();
   return on;
 }
 function setViewerFullscreen(on) {
-  if (!win || win.isDestroyed()) return false;
+  const h = host();
+  if (!h || h.isDestroyed()) return false;
   on = !!on;
   if (!on) setKeysRemote(false);
   viewerFull = on;
-  if (on !== isViewerFullscreen()) { if (isMac) win.setSimpleFullScreen(on); else win.setFullScreen(on); push('fullscreen', { on }); }
+  if (on !== isViewerFullscreen()) { if (isMac) h.setSimpleFullScreen(on); else pageFullscreen(h, on); push('fullscreen', { on }); }
   return on;
 }
 handle('fullscreen', (_e, on) => setViewerFullscreen(on));
 handle('keysRemote', (_e, on) => setKeysRemote(on));
+handle('runHotkey', (_e, kind) => (Object.hasOwn(SHORTCUTS, kind) ? fire(kind) : false));
 // Live captions: the page says which watched contact's voice to caption and streams its 16 kHz PCM here;
 // main forwards it to the hidden captioner window. Only ever the voice already playing in the viewer.
 handle('captionOn', (_e, pub) => { captioner.start(String(pub || '')); return captioner.isReady(); });
@@ -536,7 +622,26 @@ handle('controlGrant', (_e, pub, withClip) => {
 handle('controlRevoke', (_e, token) => { if (grant.revoke(token)) clip.stopFor(token, 'control ended'); return true; });
 // The renderer stopped its capture: no display is shared any more, so none can be controlled.
 handle('captureEnded', () => { sharedDisplay = null; endGrant('capture ended'); return true; });
-ipcMain.on('input', (e, token, ev) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; grant.input(token, ev); });
+// A click from the far side lands on what the far side sees. Where this app's windows are hidden from
+// capture the unattended-access notice is not in their picture, so their click goes through it to what
+// is under it, and can never press a Disconnect they cannot see; a mouse at this machine presses it as
+// before (main/accesscard.js `through`). Where the notice is in the picture (Linux, the monitor build,
+// blocking switched off) it takes their click like anything else on the screen. --notice-through is for
+// dev runs: it lets a Linux test rig, where nothing is hidden from capture, run the same path.
+const NOTICE_THROUGH = !PROD && process.argv.includes('--notice-through');
+function noticeThrough(ev) {
+  if (!ev || (ev.t !== 'b' && ev.t !== 'w') || !(NOTICE_THROUGH || (protectionOn && captureSupport().supported))) return;
+  const d = control.status().display;
+  if (!d) return;
+  const f = (v) => Math.min(1, Math.max(0, Number(v) || 0));
+  accessCard.through({ x: d.bounds.x + f(ev.x) * d.bounds.width, y: d.bounds.y + f(ev.y) * d.bounds.height });
+}
+ipcMain.on('input', (e, token, ev) => {
+  if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return;
+  const g = grant.current();
+  if (g && !g.pending && token === g.token) noticeThrough(ev);   // before the helper posts it
+  grant.input(token, ev);
+});
 // The page starts the link when control with the clipboard is on in a session, and names it by the id
 // it gets back in every later call. Whether it may start, and go on, is decided in main/clip.js.
 handle('clipStart', (_e, o) => {
@@ -663,11 +768,14 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, viewerWindow: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
 handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions') captioner.setEnabled(settings().captions); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
 // Dev builds only: lets the UI test suite resize the real window. Not registered in packaged builds.
 if (!PROD) handle('devResize', (_e, w, h) => { win.setBounds({ width: Math.max(300, Number(w) | 0), height: Math.max(250, Number(h) | 0) }); return win.getBounds(); });
+// Dev builds only: destroys the viewer's own window the way the system would, with the viewer inside, so that a test can
+// watch the page take it back (ui/share/viewer.js `lost`).
+if (!PROD) handle('devViewerKill', () => { if (!viewerOpen()) return false; viewerWin.destroy(); return true; });
 // Dev builds only, and only with the fake clipboard: the UI tests set and read the text it holds.
 if (!PROD) handle('devClip', (_e, op, text) => { if (!CLIP_FAKE) throw new Error('this run has the real clipboard: devClip needs --clip-fake'); if (op === 'set') { fakeClip.text = String(text); return true; } return fakeClip.text; });
 handle('setPopups', (_e, o) => { settings().popups = !!o.popups; settings().popupText = !!o.popupText; store.saveSoon(); return { popups: settings().popups, popupText: settings().popupText }; });
@@ -766,7 +874,8 @@ async function boot() {
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1115' : '#f4f6fa', // matches theme.css --bg, so no flash before the page paints
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, devTools: !PROD, backgroundThrottling: false }, // a share keeps running while the window is hidden
   });
-  // The UI is a local file and never navigates or opens windows. Refuse both, and every permission.
+  // The UI is a local file and never navigates. The one window it may open is the viewer's own (about:blank,
+  // filled by this page: see adoptViewer). Everything else is refused, and so is every permission but the few below.
   win.webContents.on('before-input-event', (e, input) => {
     if (!PROD && input.type === 'keyDown') log.info('input', input.key, input.code, `meta=${input.meta} ctrl=${input.control} alt=${input.alt} shift=${input.shift}`);
     const d = keysRemote ? 0 : opacityKey(input);   // theirs while I drive their screen in full screen
@@ -775,16 +884,23 @@ async function boot() {
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   // a reload: the page that held the share and the grant is gone, whatever it was doing
   win.webContents.on('did-start-navigation', (d) => { if (d.isMainFrame && !d.isSameDocument) { endGrant('page reload'); clip.stop('page reload'); setKeysRemote(false); sharedDisplay = null; endUnattended(); } });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // The viewer's own window goes with the page that opened it, once that page is really gone: a navigation the line above
+  // refuses also starts, and a window destroyed around the viewer costs the page every listener on it.
+  win.webContents.on('did-navigate', () => closeViewer('page reload'));
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => (url === 'about:blank' && frameName === 'p2p-viewer' && !viewerOpen() ? { action: 'allow', overrideBrowserWindowOptions: viewerOptions() } : { action: 'deny' }));
+  win.webContents.on('did-create-window', (child) => adoptViewer(child));
   // A screen share offers only the interface the OS routes traffic through, not every one it has. A server
   // with Docker had 36 bridge networks, all private and unreachable from outside: the peer tried each and the
   // one real address was lost among them, so the share timed out. A home-LAN address is still offered.
   win.webContents.setWebRTCIPHandlingPolicy('default_public_and_private_interfaces');
   // Everything is refused except what a screen share needs, and only for this window:
   // the display (served below without a picker) and the microphone (never the camera).
+  // And, for this window and the viewer's own: full screen through the page, with the keyboard lock that
+  // gives the page the keys the OS keeps for itself (see pageFullscreen and setKeysRemote).
   const ours = (wc) => !!wc && win && !win.isDestroyed() && wc === win.webContents;
-  win.webContents.session.setPermissionRequestHandler((wc, perm, cb, details) => cb(ours(wc) && (perm === 'display-capture' || (perm === 'media' && (details?.mediaTypes || []).every((t) => t === 'audio')))));
-  win.webContents.session.setPermissionCheckHandler((wc, perm, _origin, details) => ours(wc) && (perm === 'display-capture' || (perm === 'media' && (!details?.mediaType || details.mediaType === 'audio'))));
+  const stage = (wc, perm) => (perm === 'fullscreen' || perm === 'keyboardLock') && (ours(wc) || (!!wc && viewerOpen() && wc === viewerWin.webContents));
+  win.webContents.session.setPermissionRequestHandler((wc, perm, cb, details) => cb(stage(wc, perm) || (ours(wc) && (perm === 'display-capture' || (perm === 'media' && (details?.mediaTypes || []).every((t) => t === 'audio'))))));
+  win.webContents.session.setPermissionCheckHandler((wc, perm, _origin, details) => stage(wc, perm) || (ours(wc) && (perm === 'display-capture' || (perm === 'media' && (!details?.mediaType || details.mediaType === 'audio')))));
   // getDisplayMedia from the page gets the display this window is on, no system picker:
   // one click shares, nothing else opens. The window itself stays out of the shared video
   // wherever capture blocking works (macOS, Windows), the same as for screenshots.
@@ -798,7 +914,7 @@ async function boot() {
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   win.webContents.on('console-message', (d) => { if (d.level === 'error' || !PROD) logLine(d.level === 'error' ? 'ERROR' : 'INFO', ['renderer', d.message, d.sourceId, d.lineNumber]); });
   win.webContents.on('preload-error', (_e, p, err) => log.error('preload', p, err));
-  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); setKeysRemote(false); sharedDisplay = null; endUnattended(); if (d.reason !== 'clean-exit') win.webContents.reload(); });
+  win.webContents.on('render-process-gone', (_e, d) => { log.error('renderer gone', d); endGrant('renderer gone'); clip.stop('renderer gone'); setKeysRemote(false); closeViewer('renderer gone'); sharedDisplay = null; endUnattended(); if (d.reason !== 'clean-exit') win.webContents.reload(); });
   if (isWin) win.setSkipTaskbar(true);
   log.info('window created');
   applyProtection(win);
@@ -806,12 +922,13 @@ async function boot() {
   if (isMac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // once, before the first show
   win.on('close', (e) => { if (!quitting && BACKGROUND_APP && (hotkeyOk || tray)) { e.preventDefault(); hideWindow(); } else { quitting = true; } });
   // A background app can outlive its window. With the window goes the page that held the share: no grant, no clipboard link (and its poll) and no key routing is left without one.
-  win.on('closed', () => { endGrant('window closed'); clip.stop('window closed'); setKeysRemote(false); sharedDisplay = null; endUnattended(); });
+  win.on('closed', () => { endGrant('window closed'); clip.stop('window closed'); setKeysRemote(false); closeViewer('window closed'); sharedDisplay = null; endUnattended(); });
+  win.on('focus', grabSync); win.on('blur', grabSync);   // macOS: the key grab holds the keyboard only while the viewer's window has it
   win.on('hide', () => { log.info('window hide event'); push('hidden'); });
-  win.on('leave-full-screen', () => { viewerFull = false; setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
+  win.on('leave-full-screen', () => { if (host() !== win) return; viewerFull = false; setKeysRemote(false); push('fullscreen', { on: false }); });   // the OS took it out (green button, Esc); the viewer follows
   // Elsewhere than on macOS the window is in full screen a moment after the viewer asked for it. The page asks
   // for the key routing right away and is told no; it is told here when the window is there, and asks again.
-  win.on('enter-full-screen', () => { if (viewerFull) push('fullscreen', { on: true }); });
+  win.on('enter-full-screen', () => { if (viewerFull && host() === win) push('fullscreen', { on: true }); });
   win.on('show', () => { log.info('window show event'); if (isLinux && clampOpacity(settings().opacity) < 0.995) linuxSetOpacity(clampOpacity(settings().opacity)); });
   win.loadFile(path.join(__dirname, '..', 'ui', 'index.html'));
   win.once('ready-to-show', () => { if (!process.argv.includes('--start-hidden')) showWindow(); });
@@ -843,7 +960,7 @@ async function boot() {
   applyMode(settings().mode || 'overlap');
 }
 
-app.on('before-quit', () => { quitting = true; clip.stop('quit'); control.stop('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); accessCard.hide(); });
+app.on('before-quit', () => { quitting = true; clip.stop('quit'); control.stop('quit'); keygrab.stop('quit'); closeViewer('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); accessCard.hide(); });
 app.on('will-quit', () => { if (engine) engine.stop(); });
 app.on('window-all-closed', () => { if (!BACKGROUND_APP) app.quit(); });
 app.on('activate', showWindow);

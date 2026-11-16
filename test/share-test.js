@@ -1030,7 +1030,7 @@ function pageWorld(extra = {}) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8').split('\n');
     const line = (re) => src.find((x) => re.test(x)) || '', block = (re) => { const i = src.findIndex((x) => re.test(x)); if (i < 0) return ''; let j = i; while (src[j] !== '}') j++; return src.slice(i, j + 1).join('\n'); };
     const lis = {}, pushes = [], win = { fs: false, isDestroyed: () => false, isFullScreen() { return this.fs; }, isSimpleFullScreen: () => false, setFullScreen() {}, on: (n, f) => { lis[n] = f; }, webContents: { setIgnoreMenuShortcuts() {} } };
-    const ctx = vm.createContext({ isMac: false, win, log: { info() {} }, push: (type, d) => pushes.push(`${type}:${d.on}`) });
+    const ctx = vm.createContext({ isMac: false, win, viewerWin: null, host: () => win, grabSync() {}, pageFullscreen: (h, on) => h.setFullScreen(on), log: { info() {} }, push: (type, d) => pushes.push(`${type}:${d.on}`) });   // the viewer is in the chat's window here: no window of its own, no key grab
     vm.runInContext([line(/^function isViewerFullscreen\(\)/), line(/^let keysRemote = false;/), line(/^let viewerFull = false;/), block(/^function setKeysRemote\(on\) \{/), block(/^function setViewerFullscreen\(on\) \{/), line(/win\.on\('enter-full-screen'/), line(/win\.on\('leave-full-screen'/), 'this.m = { setKeysRemote, setViewerFullscreen };'].join('\n'), ctx);
     const m = ctx.m;
     if (lis['enter-full-screen']) lis['enter-full-screen']();
@@ -1087,21 +1087,21 @@ function pageWorld(extra = {}) {
   })().catch((e) => { console.log('FAIL  V8 threw:', e.stack); process.exitCode = 1; });
 }
 
-// V9: a window that is closed takes the grant, the clipboard link and the key routing with it, like a page that died (review of stage D, LOW 7)
+// V9: a window that is closed takes the grant, the clipboard link, the key routing and the viewer's own window with it, like a page that died (review of stage D, LOW 7)
 {
   // main/main.js cannot be loaded without Electron: the two handlers are taken from its text and run over stand-ins that record what they are asked.
   const src = fs.readFileSync(path.join(__dirname, '..', 'main', 'main.js'), 'utf8').split('\n'), line = (re) => (src.find((x) => re.test(x)) || '').trim();
   const run = (text, fire) => {
     const calls = [], lis = {}, on = (n, f) => { lis[n] = f; };
-    const ctx = vm.createContext({ calls, sharedDisplay: { id: 1 }, log: { error() {}, info() {} }, endGrant: (why) => { calls.push('grant ended'); return null; }, clip: { stop: () => calls.push('clipboard link stopped') }, setKeysRemote: (v) => calls.push(`keys remote ${v}`), endUnattended: () => calls.push('unattended notice down'),
+    const ctx = vm.createContext({ calls, sharedDisplay: { id: 1 }, log: { error() {}, info() {} }, endGrant: (why) => { calls.push('grant ended'); return null; }, clip: { stop: () => calls.push('clipboard link stopped') }, setKeysRemote: (v) => calls.push(`keys remote ${v}`), closeViewer: () => calls.push('viewer window closed'), endUnattended: () => calls.push('unattended notice down'),
       win: { on, webContents: { on, reload() {} } } });
     if (!text) return 'no such handler';
     vm.runInContext(text + '\nthis.left = () => sharedDisplay;', ctx); fire(lis);
     return calls.concat(ctx.left() === null ? ['shared display forgotten'] : []).join(', ');
   };
-  const all = 'grant ended, clipboard link stopped, keys remote false, unattended notice down, shared display forgotten';
-  ok('V9 a page that died ends all five', run(line(/webContents\.on\('render-process-gone'/), (l) => l['render-process-gone']({}, { reason: 'clean-exit' })) === all);
-  ok('V9 a window that was closed ends the same five', run(line(/win\.on\('closed'/), (l) => l.closed()) === all);
+  const all = 'grant ended, clipboard link stopped, keys remote false, viewer window closed, unattended notice down, shared display forgotten';
+  ok('V9 a page that died ends all six', run(line(/webContents\.on\('render-process-gone'/), (l) => l['render-process-gone']({}, { reason: 'clean-exit' })) === all);
+  ok('V9 a window that was closed ends the same six', run(line(/win\.on\('closed'/), (l) => l.closed()) === all);
 }
 
 // A1: a contact that is connected unattended gets control without the dialog; anyone else still gets the dialog

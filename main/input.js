@@ -143,6 +143,9 @@ function createController({ log, helpersDir, screen, systemPreferences, dry }) {
       case 'k': {
         const code = typeof ev.c === 'string' && Object.hasOwn(KEYS, ev.c) ? KEYS[ev.c] : undefined;
         if (code === undefined) { dropped++; return; }
+        // A key the viewer holds comes again and again (rep), because macOS and Windows make no repeats for a
+        // key a program put in. The X server does, for these keys like for any other: there the repeats are left out.
+        if (ev.rep && platform === 'linux') return;
         line = platform === 'win32' ? `k ${code & 0xff} ${code & 0x100 ? 1 : 0} ${ev.d ? 1 : 0}` : `k ${code} ${ev.d ? 1 : 0}`;
         break;
       }
@@ -158,4 +161,4 @@ function createController({ log, helpersDir, screen, systemPreferences, dry }) {
   return Object.assign(api, { available, start, stop, event, status });
 }
 
-module.exports = { createController, KEYS };
+module.exports = { createController, KEYS, MAC };

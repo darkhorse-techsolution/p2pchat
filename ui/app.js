@@ -10,6 +10,7 @@ function applyTheme(choice) {
   S.themeChoice = choice || 'system';
   const resolved = S.themeChoice === 'system' ? (osDark.matches ? 'dark' : 'light') : S.themeChoice;
   document.documentElement.dataset.theme = resolved;
+  if (window.ShareKit && window.ShareKit.viewer) window.ShareKit.viewer.themed(resolved);
   document.querySelectorAll('#theme button').forEach((b) => b.classList.toggle('on', b.dataset.v === S.themeChoice));
   return resolved;
 }
@@ -29,7 +30,7 @@ const fmtDay = (ts) => { const d = new Date(ts), t = new Date(); const y = new D
   if (d.toDateString() === t.toDateString()) return 'Today'; if (d.toDateString() === y.toDateString()) return 'Yesterday';
   return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: d.getFullYear() !== t.getFullYear() ? 'numeric' : undefined }); };
 const fmtListTime = (ts) => { const d = new Date(ts); return d.toDateString() === new Date().toDateString() ? fmtTime(ts) : d.toLocaleDateString([], { month: 'short', day: 'numeric' }); };
-function toast(text, cls = '') { const t = document.createElement('div'); t.className = 'toast ' + cls; t.textContent = text; $('toasts').appendChild(t); setTimeout(() => t.remove(), 3800); }
+function toast(text, cls = '') { const t = document.createElement('div'); t.className = 'toast ' + cls; t.textContent = text; $('toasts').appendChild(t); setTimeout(() => t.remove(), 3800); if (window.ShareKit && window.ShareKit.viewer) window.ShareKit.viewer.echo(text, cls); }   // and in the window a watched screen has for itself
 const contact = (pub) => S.contacts.find((c) => c.pub === pub);
 const ipcErr = (e) => String(e && e.message || e).replace(/^Error invoking remote method '\w+': (Error: )?/, '');
 
@@ -493,6 +494,9 @@ window.api.onEvent(async (ev) => {
     case 'cursor': if (window.Share) window.Share.onCursor(ev); break;
     case 'clip': if (window.Share) window.Share.onClip(ev); break;
     case 'unattended': if (window.Share) window.Share.onUnattended(ev); break;
+    case 'viewerWin': if (window.Share) window.Share.onViewerWindow(ev); break;
+    case 'grabKey': if (window.Share) window.Share.onGrabKey(ev); break;
+    case 'keygrab': if (ev.state === 'on' && window.ShareKit && window.ShareKit.viewer) window.ShareKit.viewer.tip(); else if (ev.state === 'accessibility') toast('To send ⌘Tab and the other system keys to their screen, switch on P2P Chat under System Settings → Privacy & Security → Accessibility (it was just added there), then enter full screen again. Every other key works as before.', 'err'); break;
     case 'shown': input.focus(); if (window.Share) window.Share.onShown(); if (S.current && (contact(S.current)?.unread || 0) > 0) select(S.current); break;
   }
 });

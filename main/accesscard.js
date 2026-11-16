@@ -48,12 +48,28 @@ function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac
     if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
     return true;
   }
+  // A click or a scroll that comes from the far side at this point of the screen goes through the notice to
+  // what is under it (main.js decides when that applies: where the notice is not in their picture). The
+  // window ignores the mouse for a moment around that event only, so a mouse at this machine still
+  // presses Disconnect.
+  let throughTimer = null;
+  function through(pt) {
+    if (!live || !card || card.isDestroyed() || !pt) return false;
+    const b = card.getBounds();
+    if (pt.x < b.x - 2 || pt.y < b.y - 2 || pt.x > b.x + b.width + 2 || pt.y > b.y + b.height + 2) return false;
+    const w = card;
+    if (!throughTimer) w.setIgnoreMouseEvents(true);
+    clearTimeout(throughTimer);
+    throughTimer = setTimeout(() => { throughTimer = null; if (!w.isDestroyed()) w.setIgnoreMouseEvents(false); }, 350);
+    return true;
+  }
   function hide() {
+    clearTimeout(throughTimer); throughTimer = null;
     live = false; last = null;
     const w = card; card = null;
     if (w && !w.isDestroyed()) w.destroy();
   }
-  return { show, hide, isUp: () => live && !!card && !card.isDestroyed(), status: () => ({ up: live && !!card && !card.isDestroyed(), visible: !!card && !card.isDestroyed() && card.isVisible(), text: last ? last.text : '', bounds: card && !card.isDestroyed() ? card.getBounds() : null }) };
+  return { show, hide, through, isUp: () => live && !!card && !card.isDestroyed(), status: () => ({ up: live && !!card && !card.isDestroyed(), visible: !!card && !card.isDestroyed() && card.isVisible(), text: last ? last.text : '', bounds: card && !card.isDestroyed() ? card.getBounds() : null }) };
 }
 
 module.exports = { createAccessCard };

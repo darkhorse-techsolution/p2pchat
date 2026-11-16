@@ -296,12 +296,33 @@ body.theater .viewer-captions { bottom: 7%; font-size: 20px; max-width: min(84%,
 .app.narrow .share-btn { padding: 0 8px; font-size: 12px; }
 .app.narrow .viewer-stats { display: none; }
 .viewer-bar button.rec.on { color: #fff; background: var(--bad); border-color: var(--bad); font-variant-numeric: tabular-nums; }
-/* full screen: the viewer covers the page while the window itself is full screen */
-body.theater .viewer { position: fixed; inset: 0; z-index: 60; max-height: none; min-height: 0; border: 0; }
-body.theater .viewer video { max-height: none; height: 100%; }
-body.theater .viewer-bar { position: absolute; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, .6); color: #fff; opacity: 0; transition: opacity .2s; }
-body.theater .viewer:hover .viewer-bar, body.theater .viewer-bar:focus-within { opacity: 1; }
+/* A viewer that fills its window (a window of its own, body.viewer-win) or the screen (full screen,
+   body.theater). In its own window the bar is a strip above their picture. In full screen it is a small
+   toolbar at the top that folds into a tab. Either way nothing of it lies over the bottom of their
+   screen: a bar there took the clicks meant for their Dock or taskbar, also while it was faded out. */
+body.theater .viewer, body.viewer-win .viewer { position: fixed; inset: 0; z-index: 60; max-height: none; min-height: 0; border: 0; }
+body.theater .viewer video, body.viewer-win .viewer video { max-height: none; height: 100%; }
+body.viewer-win { background: #000; }
+body.viewer-win .viewer-bar { order: -1; flex-wrap: wrap; row-gap: 4px; }
+body.viewer-win .viewer-captions { bottom: 5%; }
+.viewer-tab, .viewer-bar .fold { display: none; }
+.viewer-bar .stop-ctl { height: auto; }
+body.theater .viewer-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); order: 0; width: max-content; max-width: min(96vw, 1180px); flex-wrap: wrap; row-gap: 4px; z-index: 62; border-radius: 10px; background: rgba(0, 0, 0, .8); color: #fff; box-shadow: 0 6px 24px rgba(0, 0, 0, .45); }
+body.theater .viewer-bar .fold { display: inline-block; }
+body.theater .viewer-bar .spacer { flex: 0 0 8px; }
+body.theater .viewer-bar button:not(.clip):not(.stop-ctl):not(.on) { color: #fff; background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .3); }
+body.theater .viewer-bar button.danger:not(.on) { color: #ff9a9a; border-color: #ff9a9a; }
+body.theater .viewer.folded .viewer-bar { display: none; }
+body.theater .viewer.folded .viewer-tab { display: block; position: absolute; top: 0; left: var(--tab-x, 50%); transform: translateX(-50%); width: 46px; height: 14px; padding: 0; border: 0; border-radius: 0 0 8px 8px; z-index: 62; font-size: 11px; line-height: 11px; color: #fff; background: rgba(0, 0, 0, .6); opacity: .55; cursor: pointer; touch-action: none; }
+body.theater .viewer.folded .viewer-tab:hover { opacity: 1; }
+body.theater:has(.cast-bar.ctl:not(.hidden)) .viewer-bar { top: 42px; }
+body.theater:has(.cast-bar.ctl:not(.hidden)) .viewer.folded .viewer-tab { top: 34px; border-radius: 8px; }
 body.theater .viewer-stats, body.theater .viewer-aud { color: rgba(255, 255, 255, .7); }
+/* what the app says is read over their picture too, and never takes a click meant for it */
+body.theater .toasts, body.viewer-win .toasts { z-index: 70; pointer-events: none; }
+/* in the chat, where their screen would be: it is in a window of its own */
+.viewer-away { display: flex; align-items: center; gap: 8px; padding: 6px 12px; flex: none; font-size: 12px; color: var(--dim); background: var(--panel); border-bottom: 1px solid var(--line); }
+.viewer-away button { padding: 3px 9px; font-size: 11.5px; border-radius: 7px; white-space: nowrap; }
 /* remote control: the viewer drives the sharer's mouse and keyboard */
 .viewer-bar button.ctl.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 .viewer video:focus { outline: none; }

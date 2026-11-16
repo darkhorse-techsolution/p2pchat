@@ -70,17 +70,27 @@
     stop.classList.toggle('hidden', !driven); stop.textContent = driven && own.sess.pub !== pub && !K.hushed() ? `✋ Stop control (${K.nameOf(own.sess.pub)})` : '✋ Stop control';
     // and so can the clipboard that is shared with them: in every chat, control stays
     const cbtn = $('btnClip'); cbtn.classList.toggle('hidden', !(link && link.role === 'give')); cbtn.textContent = K.viewer.clipLabel();
-    const viewer = $('viewer'); viewer.classList.toggle('hidden', !watching);
-    if (watching) {
-      $('viewerName').textContent = `${contact(pub)?.name || ''}'s screen`; $('viewerShareBack').classList.toggle('hidden', sharing); $('viewerTalk').textContent = sess.micTrack && sess.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; $('viewerMute').textContent = sess.muted ? '🔇' : '🔊';
-      $('viewerAud').textContent = sess.remote.cast >= 2 ? ` · ${sess.remote.cast} watching` : '';   // the sharer said how many get this screen
-      $('viewerTalk').title = `Send your microphone: only ${K.nameOf(pub)} hears you`;
-      const cb = $('viewerCtl'); cb.textContent = sess.ctl.take ? '🖱 Controlling' : sess.ctl.asked ? '🖱 Asking…' : '🖱 Control'; cb.classList.toggle('on', sess.ctl.take);
-      cb.title = sess.ctl.take ? 'Stop controlling their screen' : sess.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard' + (S.settings.clipboardSync !== false && !link ? '. Text you or they copy is shared both ways while you control (Settings switches it off).' : '');
+    // The viewer shows the session it is bound to (K.viewer.rebind, first line of this paint): the open chat's
+    // while it sits in the chat; in a window of its own it keeps that session when a chat without a share is opened.
+    const vs = K.viewer.bound, away = K.viewer.away(), el = K.el;
+    el('viewer').classList.toggle('hidden', !vs);
+    if (vs) {
+      const vp = vs.pub;
+      el('viewerName').textContent = `${contact(vp)?.name || ''}'s screen`; el('viewerShareBack').classList.toggle('hidden', !!vs.screenTrack); el('viewerTalk').textContent = vs.micTrack && vs.micTrack.enabled ? '🎙 Talking' : '🎙 Talk'; el('viewerMute').textContent = vs.muted ? '🔇' : '🔊';
+      el('viewerAud').textContent = vs.remote.cast >= 2 ? ` · ${vs.remote.cast} watching` : '';   // the sharer said how many get this screen
+      el('viewerTalk').title = `Send your microphone: only ${K.nameOf(vp)} hears you`;
+      const cb = el('viewerCtl'); cb.textContent = vs.ctl.take ? '🖱 Controlling' : vs.ctl.asked ? '🖱 Asking…' : '🖱 Control'; cb.classList.toggle('on', vs.ctl.take);
+      cb.title = vs.ctl.take ? 'Stop controlling their screen' : vs.ctl.asked ? 'Waiting for their answer' : 'Ask to use their mouse and keyboard' + (S.settings.clipboardSync !== false && !link ? '. Text you or they copy is shared both ways while you control (Settings switches it off).' : '');
+      const pb = el('viewerPop'); pb.textContent = away ? '⧈' : '⧉'; pb.title = away ? 'Put their screen back into the chat' : 'Open their screen in a window of its own';
     }
-    const vclip = $('viewerClip'); vclip.classList.toggle('hidden', !(watching && linked)); vclip.textContent = K.viewer.clipLabel();
-    document.getElementById('chat').classList.toggle('with-viewer', watching);
-    if (mine) { K.rec.paint(sess); K.paintStats(sess); }   // the stats line too: the poll writes it only every 2 s, and not while this chat was closed
+    el('viewerStopCtl').classList.toggle('hidden', !driven);   // whoever drives my screen can be stopped from the viewer too: in its own window or in full screen the chat's header is out of sight
+    const vclip = el('viewerClip'); vclip.classList.toggle('hidden', !(vs && link && link.sess === vs)); vclip.textContent = K.viewer.clipLabel();
+    const gone = away && !!vs && vs.pub === pub;   // this chat's share is on screen, in a window of its own
+    $('viewerAway').classList.toggle('hidden', !gone); if (gone) $('viewerAwayText').textContent = `${K.nameOf(pub)}'s screen is open in a window of its own`;
+    document.getElementById('chat').classList.toggle('with-viewer', !!vs && !away);
+    if (vs) K.rec.paint(vs);
+    if (mine) K.paintStats(sess);   // the stats line too: the poll writes it only every 2 s, and not while this chat was closed
+    if (vs && vs !== sess) K.paintStats(vs);
     // The audience bar, above whatever chat is open: who gets my screen, and Stop for all of them. A share
     // with the one contact whose chat is open has no bar: it looks as it always did. While someone drives
     // my screen the bar stays on top of a full-screen viewer (class ctl).
@@ -115,7 +125,7 @@
   // Where the viewers read this window (K.hushed) a contact my screen goes to gets no mark at all: the list would tell each of them who the others are.
   const live = (pub) => { const x = map.get(pub); return !x ? '' : !x.screenTrack ? 'in' : K.hushed() ? '' : x.remote.screen ? 'both' : 'out'; };
   K.paint = render;
-  K.paintStats = (sess) => { if (K.viewer.bound === sess) $('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
+  K.paintStats = (sess) => { if (K.viewer.bound === sess) K.el('viewerStats').textContent = sess.stats; if (S.current === sess.pub) $('sharePill').title = sess.stats; };   // a session's stats line goes only where that session is on screen
 
   $('btnShare').onclick = () => { if (!S.current) return; const sess = cur(); if ((sess && sess.screenTrack) || K.cast.members.has(S.current)) K.cast.remove(S.current); else K.cast.add(S.current, S.settings.shareMode === 'two' ? 'two' : 'one'); };
   $('btnShareMode').onclick = (e) => { e.stopPropagation(); const m = $('shareMenu'); m.classList.toggle('hidden'); m.querySelectorAll('button[data-mode]').forEach((b) => b.classList.toggle('on', b.dataset.mode === (S.settings.shareMode || 'one'))); };
@@ -127,23 +137,31 @@
   $('castBarStop').onclick = () => K.cast.stop('user');
   document.addEventListener('click', () => $('shareMenu').classList.add('hidden'));
   $('btnMic').onclick = () => { const sess = cur(); if (sess) K.cast.talk(sess); };
-  $('viewerTalk').onclick = () => { const sess = cur(); if (sess) K.cast.talk(sess); };
-  $('viewerMute').onclick = () => { const sess = K.viewer.bound; if (!sess) return; sess.muted = !sess.muted; if (sess.remote.audioEl) sess.remote.audioEl.muted = sess.muted; render(); };
-  $('viewerShareBack').onclick = () => { const sess = K.viewer.bound; if (sess) K.cast.add(sess.pub, 'two'); };
-  $('viewerRec').onclick = () => { const sess = K.viewer.bound; if (sess) K.rec.toggle(sess); };
-  $('viewerEnd').onclick = () => { const sess = K.viewer.bound; if (sess) K.sessions.end(sess); };
+  $('viewerAwayBack').onclick = () => K.viewer.setOwn(false);
+  $('viewerAwayShow').onclick = () => window.api.viewerFront().catch(() => {});
   // the prompt belongs to the session that asked: Yes shares with that contact or with nobody
   $('shareBackYes').onclick = () => { K.unprompt('mShareBack'); const sess = K.viewer.backFor; K.viewer.backFor = null; if (sess && !sess.closed) K.cast.add(sess.pub, 'two'); };
   $('shareBackNo').onclick = () => K.unprompt('mShareBack');
   // remote control: the viewer's input on the video goes to their machine while it is on
-  $('viewerCtl').onclick = () => { const sess = K.viewer.bound; if (sess) K.control.ask(sess); };
-  $('btnStopCtl').onclick = $('castBarStopCtl').onclick = () => { const own = K.control.owner; if (own) K.control.endGive(own.sess, 'stopped'); };
+  const stopCtl = $('btnStopCtl').onclick = $('castBarStopCtl').onclick = () => { const own = K.control.owner; if (own) K.control.endGive(own.sess, 'stopped'); };
   // the dialog belongs to the session that asked (K.control.pending), whichever chat is open
   $('controlYes').onclick = () => K.control.allow();
   $('controlNo').onclick = () => K.control.deny('denied');
   $('controlClip').onchange = () => K.viewer.labelAsk();   // the Allow button says what it allows
   // clipboard off, from either side: control stays, and the clipboard does not come back in this grant
-  $('btnClip').onclick = $('viewerClip').onclick = () => { const link = K.clip.link; if (link) K.clip.off(link.sess, 'user'); };
+  const clipOff = $('btnClip').onclick = () => { const link = K.clip.link; if (link) K.clip.off(link.sess, 'user'); };
+
+  // The buttons of the viewer's own bar. Hung on through K.viewer.bind: the bar can come back out of a window that was
+  // destroyed around it, and then every handler has to be put on again (share/viewer.js).
+  K.viewer.bind(() => {
+    K.el('viewerTalk').onclick = () => { const sess = K.viewer.bound; if (sess) K.cast.talk(sess); };
+    K.el('viewerMute').onclick = () => { const sess = K.viewer.bound; if (!sess) return; sess.muted = !sess.muted; if (sess.remote.audioEl) sess.remote.audioEl.muted = sess.muted; render(); };
+    K.el('viewerShareBack').onclick = () => { const sess = K.viewer.bound; if (sess) K.cast.add(sess.pub, 'two'); };
+    K.el('viewerRec').onclick = () => { const sess = K.viewer.bound; if (sess) K.rec.toggle(sess); };
+    K.el('viewerEnd').onclick = () => { const sess = K.viewer.bound; if (sess) K.sessions.end(sess); };
+    K.el('viewerCtl').onclick = () => { const sess = K.viewer.bound; if (sess) K.control.ask(sess); };
+    K.el('viewerStopCtl').onclick = stopCtl; K.el('viewerClip').onclick = clipOff;
+  });
 
   // debug surface for the UI tests (test/ui/share.sh, cast.sh, latency.sh): session internals and audio RTP counters
   const debug = (pub) => { const x = pick(pub); return x ? { sid: x.id, ver: x.ver, mode: x.mode, rec: !!x.rec, recFile: x.rec ? x.rec.file : null, recBytes: x.rec ? x.rec.bytes : 0, remoteRec: x.remote.rec, theater: K.viewer.theater, askedBack: x.askedBack, polite: x.polite, signaling: x.pc ? x.pc.signalingState : null, conn: x.pc ? x.pc.connectionState : null, remote: { screen: x.remote.screen, mic: x.remote.mic, mode: x.remote.mode }, in: { video: !!x.remote.video, audio: !!x.remote.audio, cast: x.remote.cast, frames: x.q ? x.q.decN || 0 : 0 }, local: { screen: !!x.screenTrack, mic: !!(x.micTrack && x.micTrack.enabled) }, path: x.path, rtt: x.rtt, codec: x.codec, q: x.q || null,
@@ -155,7 +173,7 @@
     control: { owner: K.control.owner ? K.control.owner.sess.pub.slice(0, 8) : null, pending: K.control.pending ? K.control.pending.sess.pub.slice(0, 8) : null, taking: K.control.taking ? K.control.taking.pub.slice(0, 8) : null },
     clip: K.clip.link ? { with: K.clip.link.sess.pub.slice(0, 8), role: K.clip.link.role, on: !!K.clip.link.id, tx: K.clip.link.tx, rx: K.clip.link.rx, skipped: K.clip.link.skipped } : null,
     unattended: { hosted: K.unattended.hosted().map((p) => p.slice(0, 8)), wanted: K.unattended.wanted().map((p) => p.slice(0, 8)) },
-    bound: K.viewer.bound ? K.viewer.bound.pub.slice(0, 8) : null, theater: K.viewer.theater, keysWanted: K.viewer.keysWanted });
+    bound: K.viewer.bound ? K.viewer.bound.pub.slice(0, 8) : null, theater: K.viewer.theater, keysWanted: K.viewer.keysWanted, away: K.viewer.away(), locked: K.viewer.locked(), folded: K.el('viewer').classList.contains('folded') });
   async function audio(pub) {
     const sess = pick(pub);
     if (!sess || !sess.pc) return null;
@@ -166,7 +184,7 @@
     });
     return out;
   }
-  window.Share = { onFrame: (ev) => K.sessions.onFrame(ev), onStatus: (ev) => K.sessions.onStatus(ev), onSettings, onFullscreen: (ev) => K.viewer.onFullscreen(ev), onControl: (ev) => K.control.onHelper(ev), onCursor: (c) => K.control.onCursor(c), onClip: (ev) => K.clip.onLocal(ev), onShown: () => K.viewer.seen(), render,
+  window.Share = { onFrame: (ev) => K.sessions.onFrame(ev), onStatus: (ev) => K.sessions.onStatus(ev), onSettings, onFullscreen: (ev) => K.viewer.onFullscreen(ev), onControl: (ev) => K.control.onHelper(ev), onCursor: (c) => K.control.onCursor(c), onClip: (ev) => K.clip.onLocal(ev), onShown: () => K.viewer.seen(), onViewerWindow: (ev) => K.viewer.onWindow(ev), onGrabKey: (ev) => K.viewer.onGrabKey(ev), render,
     // unattended access: main calls the first once it has checked a contact's password; the second carries main's stop and its notes
     unattended: (pub) => K.unattended.start(pub), onUnattended: (ev) => { if (ev.op === 'stop') K.unattended.stop(ev.pub); else if (ev.op === 'note') K.unattended.onNote(ev); }, end: () => { const sess = cur(); if (sess) K.sessions.end(sess); }, forget: (pub) => K.cast.forget(pub), setFull: (on) => K.viewer.setFull(on), sessionPub, live, active: () => map.size > 0, lastRecording: () => K.rec.last, debug, debugAll, audio,
     inject: (m) => (K.control.isTaking() ? K.sessions.dc(K.viewer.bound, m && m.t === 'm' ? 'move' : 'ctl', m) : false) };   // test hook: send one control message as the viewer's input would

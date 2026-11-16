@@ -61,7 +61,7 @@
   }
 
   // --- overlay -------------------------------------------------------------------------------
-  const box = () => document.getElementById('viewerCaptions');
+  const box = () => K.el('viewerCaptions');   // kept by K.el: the viewer can be in a window of its own
   function render() {
     const el = box(); if (!el) return;
     const shown = lines.slice(-2);
