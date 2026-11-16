@@ -277,6 +277,17 @@ async function boot(who, opts = {}) {
   bob = await boot('bob', { blobQuota: 64 * 1024 });
   ok('S1 reconnected', await waitFor(() => alice.status(B) === 'online' && bob.status(A) === 'online', 10000, 'reconnect after share'));
 
+  // C1: a caption line (what the sender said during a share): its own kind end to end, in the thread, never counted as unread
+  const unread0 = bob.store.conv(A).unread;
+  const cap = alice.sendMessage(B, { kind: 'caption', text: 'So the first slide is the roadmap.', lang: 'js' });
+  ok('C1 a caption is stored as its own kind, with no language', cap.kind === 'caption' && cap.lang === '' && cap.from === 'me');
+  ok('C1 it arrives as a caption, in the thread', await waitFor(() => bob.store.conv(A).messages.some((m) => m.id === cap.id && m.kind === 'caption' && m.from === 'peer' && m.text === 'So the first slide is the roadmap.'), 3000, 'caption'));
+  ok('C1 it is not counted as unread', bob.store.conv(A).unread === unread0);
+  alice.sendMessage(B, { kind: 'text', text: 'and a typed one' });
+  ok('C1 a typed message after it still is', await waitFor(() => bob.store.conv(A).unread === unread0 + 1, 3000, 'typed after caption'));
+  ok('C1 alice sees the caption delivered', await waitFor(() => alice.store.conv(B).messages.find((m) => m.id === cap.id)?.status === 'delivered', 3000, 'caption ack'));
+  ok('C1 the wire check keeps caption, and still reads a kind it does not know as text (what an older app does with a caption)', sanitizeMsg({ seq: 1, text: 'x', kind: 'caption' }).kind === 'caption' && sanitizeMsg({ seq: 1, text: 'x', kind: 'whatever' }).kind === 'text');
+
   // 7. vault is encrypted on disk
   const raw = fs.readFileSync(`${DIR}/alice.vault`);
   ok('vault bytes contain no plaintext', !raw.includes('hello bob') && !raw.includes('console.log') && raw.subarray(0,5).toString() === 'P2PV2');

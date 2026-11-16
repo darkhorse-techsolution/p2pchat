@@ -53,6 +53,7 @@
   // chat's share and leaves full screen when that share is gone.
   function render() {
     K.viewer.rebind();
+    if (K.caption) K.caption.sync();   // my own voice is captioned for whoever hears my microphone right now: that changes with every share, mute and stop
     const pub = S.current, sess = cur(), mine = !!sess, conn = mine && sess.pc ? sess.pc.connectionState : '';   // no pc yet: still connecting
     const sharing = !!(mine && sess.screenTrack), watching = !!(mine && sess.remote.screen);
     const viewers = K.cast.count(), casting = K.capture.state === 'live' || K.cast.members.size > 0;   // my screen goes out already, to someone
@@ -63,7 +64,7 @@
     btn.title = stops ? (viewers >= 2 ? 'Stop sending your screen to this contact; the others keep it' : 'Stop sending your screen') : casting ? 'Send the screen you are sharing to this contact as well, one click' : `Send your screen${S.settings.shareMode === 'two' ? ' and ask for theirs (two way)' : ''} to this contact, one click`;
     $('shareMenu').querySelectorAll('button[data-mode]').forEach((b) => b.classList.toggle('hidden', sharing));   // one way or two way is chosen before a share; the ▾ stays for the audience picker
     const micBtn = $('btnMic'); micBtn.classList.toggle('hidden', !mine); if (mine) { const on = !!(sess.micTrack && sess.micTrack.enabled); micBtn.textContent = on ? '🎙' : '🎙̸'; micBtn.classList.toggle('on', on); micBtn.title = (on ? 'Mute your microphone' : sess.micTrack ? 'Unmute your microphone' : 'Talk: send your microphone') + (sharing && K.cast.members.size >= 2 ? ' for everyone you share with' : ''); }
-    const pill = $('sharePill'); const state = !mine ? '' : conn === 'connected' || conn === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && K.unattended.hosts(pub) ? ' · unattended' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') + (sharing && viewers >= 2 ? ` · ${viewers} viewers` : '') + (linked ? ' · clipboard' : '') : conn === 'failed' ? 'Failed' : 'Connecting…';
+    const pill = $('sharePill'); const state = !mine ? '' : conn === 'connected' || conn === 'completed' ? (sharing && watching ? 'Both screens' : sharing ? 'Sharing' : watching ? 'Watching' : 'Voice') + (sharing && sess.remote.rec ? ' · recorded' : '') + (sharing && K.unattended.hosts(pub) ? ' · unattended' : '') + (sharing && sess.ctl.give === 'on' ? ' · controlled' : '') + (sharing && viewers >= 2 ? ` · ${viewers} viewers` : '') + (linked ? ' · clipboard' : '') + (K.caption && K.caption.sending(sess) ? ' · captions' : '') : conn === 'failed' ? 'Failed' : 'Connecting…';
     pill.textContent = state; pill.className = 'share-pill ' + (sharing ? 'sharing' : watching ? 'watching' : 'idle') + (state ? '' : ' hidden');   // the class list in one piece: set after `hidden`, it used to put an empty pill back on screen
     // whoever drives my screen can be stopped from every chat; elsewhere than in their own the button says who it is
     const own = K.control.owner, driven = !!own && own.sess.ctl.give === 'on', stop = $('btnStopCtl');

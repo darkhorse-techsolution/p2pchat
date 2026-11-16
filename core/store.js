@@ -11,7 +11,7 @@
 //   invites       { [token]: { at, addr } }    tokens I issued, pending; addr = one-time relay intro address; expire after INVITE_TTL
 //   settings      { hotkey, discovery, theme }
 //
-// A message: { id, seq, from: 'me'|'peer', ts, kind: 'text'|'code'|'image', text, lang, status }
+// A message: { id, seq, from: 'me'|'peer', ts, kind: 'text'|'code'|'image'|'caption', text, lang, status }
 //   seq is the sender's own counter for that conversation. Both sides store both
 //   directions, so either side can rebuild the whole conversation for the other.
 //   kind 'image' adds { mime, w, h, bytes } and has text ''. The bytes themselves are
@@ -53,7 +53,7 @@ function sanitizeMsg(m, now = Date.now()) {
   const id = typeof m.id === 'string' && MSG_ID_SHAPE.test(m.id) && !WIN_DEVICE.test(m.id) ? m.id : kc.newId();
   let ts = Number(m.ts);
   if (!Number.isFinite(ts) || ts < 0 || ts > now + 86400000) ts = now;
-  const out = { id, seq: m.seq, ts: Math.floor(ts), kind: m.kind === 'code' ? 'code' : 'text', text: m.text, lang: typeof m.lang === 'string' ? m.lang.slice(0, 24) : '' };
+  const out = { id, seq: m.seq, ts: Math.floor(ts), kind: m.kind === 'code' ? 'code' : m.kind === 'caption' ? 'caption' : 'text', text: m.text, lang: typeof m.lang === 'string' ? m.lang.slice(0, 24) : '' };   // 'caption': a line of what the sender said during a share; an app from before 0.13.0 reads it as text
   if (m.kind === 'image') {
     const img = sanitizeImage(m);
     if (!img) return null;
@@ -196,7 +196,7 @@ class Store {
     const msg = { ...m, from: 'peer', status: 'delivered' };
     c.messages.push(msg);
     c.theirSeq = Math.max(c.theirSeq, m.seq);
-    c.unread += 1;
+    if (msg.kind !== 'caption') c.unread += 1;   // a caption line every few seconds is not a message to come back to
     c.messages.sort((a, b) => a.ts - b.ts);
     this.#trim(pub, c);
     this.saveSoon();

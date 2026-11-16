@@ -163,7 +163,7 @@ async function loadVaultKey(dir) {
 }
 
 let engine = null, store = null, keyInfo = null, win = null, tray = null, quitting = false, hotkeyOk = false, modeHotkeyOk = false;
-const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true, videoCodec: 'smooth', assistantBridge: false });
+const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true, videoCodec: 'smooth', assistantBridge: false, captionsOut: false });
 // Settings added after a vault was created are read with defaults (an existing vault lacks the keys).
 const turnCfg = () => { const st = settings(); return { host: st.turn ?? DEFAULT_TURN.host, user: st.turnUser ?? DEFAULT_TURN.user, pass: st.turnPass ?? DEFAULT_TURN.pass }; };
 // Public STUN as a backup for finding a DIRECT path between the two machines (the call server is the
@@ -781,8 +781,9 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
-handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions') captioner.setEnabled(settings().captions); if (key === 'assistantBridge') bridge.setEnabled(settings().assistantBridge); store.saveSoon(); push('settings', settings()); return settings()[key]; });
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, captionsOut: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+// One recognizer serves both caption settings: their voice over the video, my voice into the chat.
+handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions' || key === 'captionsOut') captioner.setEnabled(!!(settings().captions || settings().captionsOut)); if (key === 'assistantBridge') bridge.setEnabled(settings().assistantBridge); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
 // Dev builds only: lets the UI test suite resize the real window. Not registered in packaged builds.
 if (!PROD) handle('devResize', (_e, w, h) => { win.setBounds({ width: Math.max(300, Number(w) | 0), height: Math.max(250, Number(h) | 0) }); return win.getBounds(); });
@@ -851,7 +852,7 @@ async function boot() {
     return new Response(data, { headers: { 'content-type': rec?.mime || 'image/jpeg', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
   });
   captioner.handleProtocol();
-  if (settings().captions) captioner.setEnabled(true);   // opt-in: downloads the engine + model once, then runs a hidden WASM window
+  if (settings().captions || settings().captionsOut) captioner.setEnabled(true);   // opt-in: downloads the engine + model once, then runs a hidden WASM window
 
   engine = new Engine(store, new Transport());
   for (const ev of ['contact', 'status', 'update', 'history', 'typing', 'error', 'info', 'discovered', 'relay', 'share']) engine.on(ev, (d) => push(ev, d));
@@ -864,7 +865,7 @@ async function boot() {
   powerMonitor.on('resume', () => engine.kick());
   powerMonitor.on('unlock-screen', () => engine.kick());
   engine.on('message', ({ pub }) => push('contact', { pub }));
-  engine.on('message', ({ pub, msg }) => { if (msg.from === 'peer') showPopup({ pub, name: store.contact(pub)?.name || 'New message', text: msg.text, kind: msg.kind }); });
+  engine.on('message', ({ pub, msg }) => { if (msg.from === 'peer' && msg.kind !== 'caption') showPopup({ pub, name: store.contact(pub)?.name || 'New message', text: msg.text, kind: msg.kind }); });
   engine.on('message', ({ pub, msg }) => bridge.onMessage(pub, msg));
   engine.on('error', (d) => log.error('engine', d.message));
   engine.on('info', (d) => log.info('engine', d.message));

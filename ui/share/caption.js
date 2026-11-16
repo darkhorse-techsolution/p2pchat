@@ -5,12 +5,25 @@
 // the voice of the share on screen, and only while that share's Sharing indicator is up on the other side.
 // The chat window cannot run the WASM recognizer itself (strict CSP), so the work happens in main/caption.js.
 //
-// Reads from app.js: S, $, toast. Reads K.viewer at call time.
+// The other way round (Settings: "Send captions of what I say..."): while my microphone goes to a contact in a
+// share, the same recognizer reads my own microphone here, and every finished line is sent to that contact as a
+// chat message of kind 'caption'. Text gets through a connection too weak for the picture, it stays in the thread,
+// and I see each line in my own copy of the chat as it goes out. Only my microphone, never the computer's sound,
+// and nothing while the microphone is muted. There is one recognizer: while it reads my voice, the captions over
+// a share I watch pause.
+//
+// Reads from app.js: S, $, toast. Reads K.viewer, K.mic and K.sessions at call time.
 (() => {
   const K = window.ShareKit;
   const enabled = () => !!(S.settings && S.settings.captions);
+  const outOn = () => !!(S.settings && S.settings.captionsOut);
+  const SELF = '~self';           // the recognizer's name for my own voice; no contact id looks like it
+  // Who hears my microphone right now: a caption of what I say goes to them and to nobody else. A muted
+  // microphone has none; an unattended share sends no microphone, so it has none either.
+  const hearers = () => K.sessions.all().filter((x) => !x.closed && x.micTrack && x.micTrack.enabled && x.micTrack.readyState !== 'ended');
+  const NOISE = /^[\[(].*[\])]$/;   // what the recognizer writes for a sound that is not speech: "[BLANK_AUDIO]", "(music)"
 
-  let cur = null;                 // { pub, ctx, src, proc, gain }
+  let cur = null;                 // { pub, track, out, ctx, src, proc, gain }
   let idleTimer = null;
   let lines = [];                 // finalized caption lines (last two shown)
   let interim = '';               // the line still being spoken
@@ -22,9 +35,8 @@
     return out;
   }
 
-  function startTap(sess) {
-    const track = sess.remote && sess.remote.audio;
-    if (!track) return;
+  function startTap(want) {
+    const track = want.track;
     let ctx;
     try { ctx = new AudioContext(); } catch { return; }
     const src = ctx.createMediaStreamSource(new MediaStream([track]));
@@ -36,12 +48,12 @@
       const i16 = new Int16Array(d.length);
       for (let i = 0; i < d.length; i++) { const s = Math.max(-1, Math.min(1, d[i])); i16[i] = s < 0 ? s * 32768 : s * 32767; }
       const merged = new Int16Array(acc.length + i16.length); merged.set(acc); merged.set(i16, acc.length); acc = merged;
-      if (acc.length >= 4000) { try { window.api.captionPcm(sess.pub, acc.buffer.slice(0)); } catch {} acc = new Int16Array(0); }
+      if (acc.length >= 4000) { try { window.api.captionPcm(want.pub, acc.buffer.slice(0)); } catch {} acc = new Int16Array(0); }
     };
     src.connect(proc); proc.connect(gain); gain.connect(ctx.destination);
     ctx.resume && ctx.resume().catch(() => {});
-    cur = { pub: sess.pub, ctx, src, proc, gain };
-    window.api.captionOn(sess.pub).catch(() => {});
+    cur = { pub: want.pub, track, out: !!want.out, ctx, src, proc, gain };
+    window.api.captionOn(want.pub).catch(() => {});
   }
 
   function stopTap() {
@@ -52,12 +64,20 @@
     clear();
   }
 
-  // Start, stop or switch the tap to the share currently on screen. Called whenever that can change.
+  // Start, stop or switch the tap: my own microphone while someone hears it and the setting is on, else the
+  // share currently on screen. Called whenever either can change (every paint of the share controls).
   function sync() {
-    const want = enabled() && K.viewer.bound && K.viewer.bound.remote && K.viewer.bound.remote.audio ? K.viewer.bound : null;
-    if (cur && (!want || want.pub !== cur.pub)) stopTap();
+    const voice = outOn() && K.mic && K.mic.state === 'live' ? (K.mic.voice || K.mic.src) : null;   // voice: the microphone alone, where the device's track carries more
+    const b = K.viewer.bound;
+    const want = voice && hearers().length ? { pub: SELF, track: voice, out: true }
+      : enabled() && b && b.remote && b.remote.audio ? { pub: b.pub, track: b.remote.audio } : null;
+    if (cur && (!want || want.pub !== cur.pub || (cur.out && want.track !== cur.track))) stopTap();
     if (want && !cur) startTap(want);
     if (!want) clear();
+  }
+  function sendOut(text) {
+    if (NOISE.test(text)) return;
+    for (const x of hearers()) window.api.send(x.pub, { kind: 'caption', text }).catch(() => {});
   }
 
   // --- overlay -------------------------------------------------------------------------------
@@ -76,6 +96,7 @@
   function onText(ev) {
     if (!cur || ev.pub !== cur.pub) return;
     const t = (ev.text || '').trim(); if (!t) return;
+    if (cur.out) { if (ev.final) sendOut(t); return; }   // my own voice: finished lines go into the chat, nothing over the video
     if (ev.final) { lines.push(t); if (lines.length > 6) lines = lines.slice(-6); interim = ''; }
     else interim = t;
     render(); bumpIdle();
@@ -88,5 +109,5 @@
     else if (ev.state === 'error') toast(`Captions unavailable: ${ev.message || 'failed to start'}`, 'err');
   }
 
-  K.caption = { sync, onText, onStatus, clear, active: () => !!cur };
+  K.caption = { sync, onText, onStatus, clear, active: () => !!cur, sending: (sess) => !!(cur && cur.out && hearers().includes(sess)) };
 })();

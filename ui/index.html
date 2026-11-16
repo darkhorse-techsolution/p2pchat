@@ -190,6 +190,8 @@
     <label class="check"><input type="checkbox" id="setCallsRelayOnly"> Route shares through the call server only (hides your IP address from the contact)</label>
     <label class="check"><input type="checkbox" id="setRecordShares"> Record incoming screen shares to a file (their screen and voice)</label>
     <label class="check"><input type="checkbox" id="setCaptions"> Live captions of a contact's voice while you watch their share (on-device, downloads once)</label>
+    <label class="check"><input type="checkbox" id="setCaptionsOut"> Send captions of what I say during a share, as labeled messages in the chat</label>
+    <div class="muted small">For a contact on a connection too weak for the picture: your microphone is turned into text on this computer and each finished line goes into the chat, marked Caption, where you see it too. Only your microphone, only while it is on and someone hears it in a share; never the computer's sound. The Sharing pill reads "captions" while it runs. English; both sides need 0.13.0 for the label.</div>
     <p class="muted" id="captionNote" hidden></p>
     <div class="row"><button id="openRecordings">Open recordings folder</button><span class="muted small" id="recordingsDir"></span></div>
     <div class="muted small">Starts when a contact's screen arrives, also for a share already running when you switch this on; ● Record in the viewer does the same for one share. Plain .webm files (VP9 + Opus) outside the encrypted vault, playable anywhere. The contact's app shows that they are being recorded.</div>

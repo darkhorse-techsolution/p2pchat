@@ -238,7 +238,7 @@ class Engine extends EventEmitter {
     const clean = String(text || '');
     if (!clean.trim()) throw new Error('empty message');
     if (clean.length > MAX_TEXT_CHARS || Buffer.byteLength(clean, 'utf8') > MAX_TEXT_BYTES) throw new Error(`message too long (limit ${MAX_TEXT_BYTES / 1024} KB)`);
-    const msg = this.store.addOutgoing(id, { kind: kind === 'code' ? 'code' : 'text', text: clean, lang: String(lang || '').slice(0, 24) });
+    const msg = this.store.addOutgoing(id, { kind: kind === 'code' ? 'code' : kind === 'caption' ? 'caption' : 'text', text: clean, lang: kind === 'caption' ? '' : String(lang || '').slice(0, 24) });
     this.emit('message', { pub: id, msg });
     const p = this.peers.get(id);
     if (p) this.#deliver(p, msg);

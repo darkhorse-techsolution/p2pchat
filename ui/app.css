@@ -109,6 +109,8 @@ body.win .side-top { padding-left: 14px; }
 .msg.peer .bubble { background: var(--peer); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
 .msg.cont.me .bubble { border-top-right-radius: 6px; }
 .msg.cont.peer .bubble { border-top-left-radius: 6px; }
+.cap-tag { font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--dim); margin: 2px 4px 3px; }
+.msg.caption .bubble { font-style: italic; opacity: .92; }
 .meta { font-size: 10.5px; color: var(--faint); margin: 3px 6px 0; display: flex; gap: 5px; align-items: center; }
 .tick { font-size: 11px; }
 .tick.pending { color: var(--faint); }

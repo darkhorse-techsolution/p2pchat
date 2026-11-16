@@ -97,7 +97,7 @@ function renderContacts() {
     const row = document.createElement('div'); row.className = 'contact' + (c.pub === S.current ? ' active' : ''); row.dataset.pub = c.pub;
     const av = document.createElement('div'); av.className = 'avatar'; avatar(av, c.pub, c.name, c.status);
     const main = document.createElement('div'); main.className = 'c-main';
-    const prev = c.last ? (c.last.kind === 'code' ? c.last.text.split('\n')[0] : c.last.kind === 'image' ? 'Screenshot' : c.last.text) : (c.status === 'online' ? 'Online' : 'No messages yet');
+    const prev = c.last ? (c.last.kind === 'code' ? c.last.text.split('\n')[0] : c.last.kind === 'image' ? 'Screenshot' : c.last.kind === 'caption' ? `Caption: ${c.last.text}` : c.last.text) : (c.status === 'online' ? 'Online' : 'No messages yet');
     main.innerHTML = `<div class="c-name">${esc(c.name)}${c.verified ? ' <span class="verified">✓</span>' : ''}</div><div class="c-prev${c.last?.kind === 'code' ? ' code' : c.last?.kind === 'image' ? ' image' : ''}">${c.last?.from === 'me' ? '<span class="muted">You: </span>' : ''}${esc(prev)}</div>`;
     const side = document.createElement('div'); side.className = 'c-side';
     const live = window.Share ? window.Share.live(c.pub) : '';
@@ -170,7 +170,7 @@ function renderText(text) {
 const COLLAPSE_LINES = 18;
 S.codeOpen = new Set();   // blocks the user expanded this session
 function messageEl(m, cont) {
-  const el = document.createElement('div'); el.className = `msg ${m.from}${cont ? ' cont' : ''}${m.kind === 'code' ? ' code' : m.kind === 'image' ? ' image' : ''}`; el.dataset.id = m.id;
+  const el = document.createElement('div'); el.className = `msg ${m.from}${cont ? ' cont' : ''}${m.kind === 'code' ? ' code' : m.kind === 'image' ? ' image' : m.kind === 'caption' ? ' caption' : ''}`; el.dataset.id = m.id;
   if (m.kind === 'code') {
     const { html, lang } = window.hl.highlight(m.text, m.lang);
     const lines = m.text.split('\n').length;
@@ -205,7 +205,8 @@ function messageEl(m, cont) {
     s.onclick = async () => { try { await window.api.saveImage(S.current, m.id); } catch (e) { toast(ipcErr(e), 'err'); } };
     tools.append(c, s); el.appendChild(tools);
   } else {
-    const b = document.createElement('div'); b.className = 'bubble' + (isEmojiOnly(m.text) ? ' emoji' : ''); b.appendChild(renderText(m.text)); el.appendChild(b);
+    if (m.kind === 'caption' && !cont) { const tag = document.createElement('div'); tag.className = 'cap-tag'; tag.textContent = 'Caption'; tag.title = m.from === 'me' ? 'What you said during the share, written by your computer and sent as text' : 'What they said during the share, written by their computer and sent as text'; el.appendChild(tag); }
+    const b = document.createElement('div'); b.className = 'bubble' + (m.kind !== 'caption' && isEmojiOnly(m.text) ? ' emoji' : ''); b.appendChild(renderText(m.text)); el.appendChild(b);
     const tools = document.createElement('div'); tools.className = 'bubble-tools';
     const c = document.createElement('button'); c.textContent = 'Copy'; c.title = 'Copy message text';
     c.onclick = async () => { await window.api.copy(m.text); c.textContent = 'Copied'; setTimeout(() => (c.textContent = 'Copy'), 1200); };
@@ -350,7 +351,7 @@ function renderSettings() {
   $('setCodeWrap').checked = S.prefs.codeWrap !== false; $('setCodeCollapse').checked = S.prefs.codeCollapse !== false;
   document.querySelectorAll('#shareModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.shareMode || 'one')));
   document.querySelectorAll('#videoCodecSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.videoCodec || 'smooth')));
-  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setAssistantBridge').checked = !!S.settings.assistantBridge; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
+  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setAssistantBridge').checked = !!S.settings.assistantBridge; $('setCaptionsOut').checked = !!S.settings.captionsOut; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
   $('aboutLine').textContent = `P2P Chat ${S.version}${S.packaged ? '' : ' (dev)'} · log: ${S.logPath || 'n/a'}`;
   const v = $('vaultInfo'); v.className = 'vault ' + (S.vaultSecure ? 'ok' : 'warn');
   v.textContent = (S.vaultSecure ? 'Vault key held by the OS keychain · ' : S.packaged ? 'Vault key stored unprotected (no keychain available) · ' : 'Dev run: vault key is a plain file, Keychain not used · ') + S.vaultPath;
@@ -373,11 +374,12 @@ $('setAssistantBridge').onchange = async (e) => { S.settings.assistantBridge = a
 $('setRecordShares').onchange = async (e) => { S.settings.recordShares = await window.api.setPref('recordShares', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setClipboardSync').onchange = async (e) => { S.settings.clipboardSync = await window.api.setPref('clipboardSync', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setCaptions').onchange = async (e) => { S.settings.captions = await window.api.setPref('captions', e.target.checked); renderCaptionNote(); if (window.Share) window.Share.onSettings(); };
+$('setCaptionsOut').onchange = async (e) => { S.settings.captionsOut = await window.api.setPref('captionsOut', e.target.checked); renderCaptionNote(); if (window.Share) window.Share.onSettings(); };
 function renderCaptionNote() {
   const note = $('captionNote'); if (!note) return;
-  const on = !!S.settings.captions, present = !!(S.caption && S.caption.present);
+  const on = !!(S.settings.captions || S.settings.captionsOut), present = !!(S.caption && S.caption.present);
   note.hidden = !on;
-  note.textContent = on ? (present ? 'On-device English captions, tiny model. Nothing is sent anywhere; only the voice of the share you are watching is read.' : 'First time on: downloads a one-time English model and runtime (about 70 MB) to this device. Nothing else leaves your computer.') : '';
+  note.textContent = on ? (present ? 'On-device English captions, tiny model. The sound goes nowhere: it is read on this computer, and only the text of your own voice is sent, when you switched that on.' : 'First time on: downloads a one-time English model and runtime (about 70 MB) to this device. Nothing else leaves your computer.') : '';
 }
 $('openRecordings').onclick = () => window.api.openRecordings();
 $('setAutostart').onchange = async (e) => { S.settings.autostart = await window.api.setAutostart(e.target.checked); };
@@ -479,7 +481,7 @@ window.api.onEvent(async (ev) => {
         // only a window the user is actually looking at clears unread; hidden or unfocused, it keeps counting
         if (ev.msg.from === 'peer' && document.visibilityState === 'visible' && document.hasFocus()) window.api.conversation(S.current);
       }
-      else if (ev.msg.from === 'peer') { if (!S.current) { await refreshState(); return select(ev.pub); } const c = contact(ev.pub); if (c) toast(`${c.name}: ${ev.msg.kind === 'code' ? 'sent a code snippet' : ev.msg.kind === 'image' ? 'sent a screenshot' : ev.msg.text.slice(0, 60)}`); }
+      else if (ev.msg.from === 'peer') { if (!S.current) { await refreshState(); return select(ev.pub); } const c = contact(ev.pub); if (c && ev.msg.kind !== 'caption') toast(`${c.name}: ${ev.msg.kind === 'code' ? 'sent a code snippet' : ev.msg.kind === 'image' ? 'sent a screenshot' : ev.msg.text.slice(0, 60)}`); }
       await refreshState(); break;
     }
     // refreshes, not reads: a tick or an image arriving must not clear unread on a window nobody is looking at

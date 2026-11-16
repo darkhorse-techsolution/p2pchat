@@ -29,6 +29,8 @@ const FRED = 'fOIEbc-Daaaa1111', PC = 'bUcOv4CKbbbb2222', TWO = 'bUcOv4ZZcccc333
   ok('B2 an image is a line, never its bytes', msgOut({ id: 'a', from: 'peer', ts: 1, kind: 'image', w: 1920, h: 1080, bytes: 5, status: 'delivered' }).text === '[image 1920x1080]');
   const c = msgOut({ id: 'b', from: 'me', ts: 2, kind: 'code', text: 'x()', lang: 'js', status: 'pending' });
   ok('B2 code keeps its language; "me" stays me', c.lang === 'js' && c.from === 'me' && c.text === 'x()');
+  const cp = msgOut({ id: 'c', from: 'peer', ts: 3, kind: 'caption', text: 'So the first slide is the roadmap.', lang: '', status: 'delivered' });
+  ok('B2 a caption keeps its kind and its text', cp.kind === 'caption' && cp.text === 'So the first slide is the roadmap.' && cp.from === 'them' && cp.lang === undefined);
   ok('B2 a contact\'s message is from "them"', msgOut({ from: 'peer', kind: 'text', text: 'hi' }).from === 'them');
 }
 

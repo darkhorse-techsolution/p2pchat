@@ -5,6 +5,8 @@ cd "$(dirname "$0")/.." || exit 1
 ELECTRON="/Users/max/Public/shield-wrap/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 [ -x "$ELECTRON" ] || { echo "Electron not found at $ELECTRON" >&2; exit 1; }
 export ELECTRON_RUN_AS_NODE=1
+# Every source file must at least parse: no suite loads main/main.js whole, so a broken line there passed all of them once.
+echo "== syntax";  for f in main/*.js core/*.js ui/*.js ui/share/*.js ui/caption/*.js mcp/*.js; do "$ELECTRON" --check "$f" || exit 1; done
 echo "== crypto";  "$ELECTRON" test/crypto-test.js || exit 1
 echo "== engine";  "$ELECTRON" test/engine-test.js || exit 1
 echo "== relay";   "$ELECTRON" test/relay-test.js || exit 1
@@ -15,6 +17,7 @@ echo "== share";   "$ELECTRON" test/share-test.js || exit 1
 echo "== unattended"; "$ELECTRON" test/unattended-test.js || exit 1
 echo "== viewer"; "$ELECTRON" test/viewer-test.js || exit 1
 echo "== speed"; "$ELECTRON" test/speed-test.js || exit 1
+echo "== caption"; "$ELECTRON" test/caption-test.js || exit 1
 echo "== bridge"; "$ELECTRON" test/bridge-test.js || exit 1
 echo "== mcp"; "$ELECTRON" test/mcp-test.js || exit 1
 echo "== theme contrast"; node test/theme-contrast.js | tail -1 || exit 1
