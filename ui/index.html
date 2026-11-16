@@ -12,7 +12,7 @@
   <aside class="sidebar">
     <div class="side-resize" id="sideResize" title="Drag to resize"></div>
     <div class="side-top">
-      <div class="brand"><span class="logo"></span>P2P Chat</div>
+      <div class="brand"><span class="logo"></span>P2P Chat<span class="pill up hidden" id="assistantPill" title="Claude Code on this computer can read your chats and send messages for you. Turn it off in Settings.">Claude connected</span></div>
       <button class="icon-btn" id="btnAdd" title="Add contact (⌘N)">+</button>
     </div>
     <div class="search"><input id="search" placeholder="Search" spellcheck="false"></div>
@@ -195,6 +195,9 @@
     <div class="muted small">Starts when a contact's screen arrives, also for a share already running when you switch this on; ● Record in the viewer does the same for one share. Plain .webm files (VP9 + Opus) outside the encrypted vault, playable anywhere. The contact's app shows that they are being recorded.</div>
     <label class="check"><input type="checkbox" id="setClipboardSync"> Share clipboard text during remote control (both ways, only while control is on)</label>
     <div class="muted small">Remote control: 🖱 Control in the viewer asks the sharer; they see a dialog and can stop it at any moment. Nothing is allowed by default. With the switch above on, the dialog also offers to share copied text (up to 64 KB per copy) until control ends; either side can leave it out.</div>
+    <label>Claude</label>
+    <label class="check"><input type="checkbox" id="setAssistantBridge"> Let Claude Code on this computer read your chats and send messages for you</label>
+    <div class="muted small">Text only: it never sees a shared screen or a file. Off by default. While on, Claude Code (through the p2pchat MCP server, see the README) can list your contacts, read a chat and send a message under your name; "Claude connected" shows at the top while it is attached. Only this computer can reach it, and only with the key in bridge.json in this app's data folder, a file only you can read, new at every start.</div>
     <label>Code blocks</label>
     <label class="check"><input type="checkbox" id="setCodeWrap"> Wrap long lines (no sideways scrolling)</label>
     <label class="check"><input type="checkbox" id="setCodeCollapse"> Collapse blocks longer than 18 lines, with a "Show all" button</label>

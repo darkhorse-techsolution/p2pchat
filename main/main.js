@@ -16,6 +16,7 @@ const { createCaptioner } = require('./caption.js');
 const { createUnattended } = require('./unattended.js');
 const { createAccessCard } = require('./accesscard.js');
 const { createKeyGrab } = require('./keygrab.js');
+const { createBridge } = require('./bridge.js');
 
 const argFlag = (name) => { const hit = process.argv.find((a) => a.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : ''; };
 const instance = argFlag('instance');
@@ -162,7 +163,7 @@ async function loadVaultKey(dir) {
 }
 
 let engine = null, store = null, keyInfo = null, win = null, tray = null, quitting = false, hotkeyOk = false, modeHotkeyOk = false;
-const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true, videoCodec: 'smooth' });
+const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true, videoCodec: 'smooth', assistantBridge: false });
 // Settings added after a vault was created are read with defaults (an existing vault lacks the keys).
 const turnCfg = () => { const st = settings(); return { host: st.turn ?? DEFAULT_TURN.host, user: st.turnUser ?? DEFAULT_TURN.user, pass: st.turnPass ?? DEFAULT_TURN.pass }; };
 // Public STUN as a backup for finding a DIRECT path between the two machines (the call server is the
@@ -219,6 +220,11 @@ function opacityKey(input) {
 const push = (type, data = {}) => { if (win && !win.isDestroyed()) win.webContents.send('event', { type, ...data }); };
 // Live captions for a watched share: a hidden WASM window transcribes the voice; see main/caption.js.
 const captioner = createCaptioner({ app, protocol, BrowserWindow, ipcMain, log, push });
+// Claude Code (or another assistant on this computer) lists contacts, reads a chat and sends a message as the user
+// through this, only while Settings has it on; mcp/p2pchat-mcp.js is the MCP server that talks to it. Same views
+// and the same send path as the chat window.
+const bridge = createBridge({ dir: app.getPath('userData'), log, version: app.getVersion(), onStatus: (st) => push('assistant', st),
+  api: { contacts: () => store.contacts().map(contactView), conversation: (pub) => store.conv(pub).messages, send: (pub, m) => engine.sendMessage(pub, m) } });
 
 // --- message pop-ups -------------------------------------------------------------
 // Drawn by the app, not the OS: no app name, no icon, nothing left in Notification
@@ -436,6 +442,7 @@ handle('state', () => ({
   viewer: { open: viewerOpen(), visible: viewerOpen() && viewerWin.isVisible(), focused: viewerOpen() && viewerWin.isFocused(), fullscreen: isViewerFullscreen(), htmlFullscreen: viewerFull, bounds: viewerOpen() ? viewerWin.getBounds() : null, title: viewerOpen() ? viewerWin.getTitle() : '' },
   unattended: { live: uaLive.length, card: accessCard.status(), ...unattended.status() },
   caption: { present: captioner.assetsPresent(), ready: captioner.isReady() },
+  assistant: bridge.status(),
   versions: { electron: process.versions.electron, node: process.versions.node },
 }));
 handle('setName', (_e, name) => { engine.setMyName(name); return engine.me.name; });
@@ -774,8 +781,8 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
-handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions') captioner.setEnabled(settings().captions); store.saveSoon(); push('settings', settings()); return settings()[key]; });
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions') captioner.setEnabled(settings().captions); if (key === 'assistantBridge') bridge.setEnabled(settings().assistantBridge); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
 // Dev builds only: lets the UI test suite resize the real window. Not registered in packaged builds.
 if (!PROD) handle('devResize', (_e, w, h) => { win.setBounds({ width: Math.max(300, Number(w) | 0), height: Math.max(250, Number(h) | 0) }); return win.getBounds(); });
@@ -858,11 +865,13 @@ async function boot() {
   powerMonitor.on('unlock-screen', () => engine.kick());
   engine.on('message', ({ pub }) => push('contact', { pub }));
   engine.on('message', ({ pub, msg }) => { if (msg.from === 'peer') showPopup({ pub, name: store.contact(pub)?.name || 'New message', text: msg.text, kind: msg.kind }); });
+  engine.on('message', ({ pub, msg }) => bridge.onMessage(pub, msg));
   engine.on('error', (d) => log.error('engine', d.message));
   engine.on('info', (d) => log.info('engine', d.message));
   engine.on('relay', (d) => log.info('relay', d.status, d.reason || ''));
   engine.on('status', (d) => log.info('peer', d.pub.slice(0, 8), d.status, d.reason || ''));
   await engine.start();
+  if (settings().assistantBridge) bridge.setEnabled(true);   // opt-in, off by default
   if (settings().discovery) engine.transport.startDiscovery(() => ({ invite: engine.discoveryInvite() }));
 
   // Background app: no Dock icon on macOS, no taskbar button on Windows.
@@ -966,7 +975,7 @@ async function boot() {
   applyMode(settings().mode || 'overlap');
 }
 
-app.on('before-quit', () => { quitting = true; clip.stop('quit'); control.stop('quit'); keygrab.stop('quit'); closeViewer('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); accessCard.hide(); });
+app.on('before-quit', () => { quitting = true; bridge.stop('quit'); clip.stop('quit'); control.stop('quit'); keygrab.stop('quit'); closeViewer('quit'); globalShortcut.unregisterAll(); if (popup && !popup.isDestroyed()) popup.destroy(); accessCard.hide(); });
 app.on('will-quit', () => { if (engine) engine.stop(); });
 app.on('window-all-closed', () => { if (!BACKGROUND_APP) app.quit(); });
 app.on('activate', showWindow);

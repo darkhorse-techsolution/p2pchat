@@ -350,7 +350,7 @@ function renderSettings() {
   $('setCodeWrap').checked = S.prefs.codeWrap !== false; $('setCodeCollapse').checked = S.prefs.codeCollapse !== false;
   document.querySelectorAll('#shareModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.shareMode || 'one')));
   document.querySelectorAll('#videoCodecSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.videoCodec || 'smooth')));
-  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
+  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setAssistantBridge').checked = !!S.settings.assistantBridge; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
   $('aboutLine').textContent = `P2P Chat ${S.version}${S.packaged ? '' : ' (dev)'} · log: ${S.logPath || 'n/a'}`;
   const v = $('vaultInfo'); v.className = 'vault ' + (S.vaultSecure ? 'ok' : 'warn');
   v.textContent = (S.vaultSecure ? 'Vault key held by the OS keychain · ' : S.packaged ? 'Vault key stored unprotected (no keychain available) · ' : 'Dev run: vault key is a plain file, Keychain not used · ') + S.vaultPath;
@@ -369,6 +369,7 @@ document.querySelectorAll('#shareModeSeg button').forEach((b) => (b.onclick = as
 const saveTurn = async () => { S.turn = { host: await window.api.setPref('turn', $('setTurn').value), user: await window.api.setPref('turnUser', $('setTurnUser').value), pass: await window.api.setPref('turnPass', $('setTurnPass').value) }; toast('Call server saved. It applies to the next share.', 'ok'); };
 $('setTurn').onchange = saveTurn; $('setTurnUser').onchange = saveTurn; $('setTurnPass').onchange = saveTurn;
 $('setCallsRelayOnly').onchange = async (e) => { S.settings.callsRelayOnly = await window.api.setPref('callsRelayOnly', e.target.checked); };
+$('setAssistantBridge').onchange = async (e) => { S.settings.assistantBridge = await window.api.setPref('assistantBridge', e.target.checked); };
 $('setRecordShares').onchange = async (e) => { S.settings.recordShares = await window.api.setPref('recordShares', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setClipboardSync').onchange = async (e) => { S.settings.clipboardSync = await window.api.setPref('clipboardSync', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setCaptions').onchange = async (e) => { S.settings.captions = await window.api.setPref('captions', e.target.checked); renderCaptionNote(); if (window.Share) window.Share.onSettings(); };
@@ -442,13 +443,23 @@ function renderShield(on) {
 $('shield').onclick = async () => renderShield(await window.api.protection(!S.protection));
 
 // ---------- state + events ----------
+// The pill says, in the chat window itself, that Claude Code is attached right now (Settings > Claude).
+function renderAssistant(st, quiet) {
+  const was = (S.assistant && S.assistant.connected) || 0;
+  S.assistant = st || { on: false, connected: 0 };
+  $('assistantPill').classList.toggle('hidden', !(S.assistant.on && S.assistant.connected));
+  if (quiet) return;
+  if (S.assistant.connected && !was) toast('Claude Code connected: it can read your chats and send messages for you', 'ok');
+  if (S.assistant.sent) toast(`Claude sent a message to ${S.assistant.sent.name}`);
+  if (S.assistant.error) toast(`The Claude connection could not start: ${S.assistant.error}`, 'err');
+}
 async function refreshState() {
   const s = await window.api.state();
   S.me = s.me; S.contacts = s.contacts; S.settings = s.settings; S.capture = s.capture; S.vaultSecure = s.vaultSecure; S.vaultPath = s.vaultPath; S.recordingsDir = s.recordingsDir; S.discovery = !!s.settings.discovery;
   S.autostartSupported = s.autostartSupported; S.version = s.version; S.packaged = s.packaged; S.logPath = s.logPath; S.backgroundApp = s.backgroundApp; S.defaults = s.defaults; S.turn = s.turn; S.caption = s.caption; renderMode(s.mode);
   S.prefs = { sidebarWidth: s.settings.sidebarWidth ?? 300, sidebarCollapsed: !!s.settings.sidebarCollapsed, codeWrap: s.settings.codeWrap !== false, codeCollapse: s.settings.codeCollapse !== false }; applyLayout();
   applyTheme(s.settings.theme || 'system');
-  renderMe(); renderContacts(); renderShield(s.protection); renderRelay(s.relay);
+  renderMe(); renderContacts(); renderShield(s.protection); renderRelay(s.relay); renderAssistant(s.assistant, true);
   $('opacityRow').classList.toggle('hidden', !s.opacitySupported); renderOpacity(s.opacity);
   if (S.current) renderHead();
   $('addDiscover').textContent = `LAN discovery: ${S.discovery ? 'on' : 'off'}`;
@@ -489,6 +500,7 @@ window.api.onEvent(async (ev) => {
     case 'fullHotkey': if (window.Share && window.Share.active()) window.Share.setFull(); break;
     case 'mode': renderMode(ev.mode); toast(`${MODE_TEXT[ev.mode]}. ${prettyHotkey(ev.hotkey)} cycles modes.`, ev.mode === 'overlay' ? '' : 'ok'); break;
     case 'settings': S.settings = { ...S.settings, ...ev }; if (openModal === 'mSettings') renderSettings(); if (window.Share) window.Share.onSettings(); break;
+    case 'assistant': renderAssistant(ev); break;
     case 'caption': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onText(ev); break;
     case 'caption-status': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onStatus(ev); if (ev.state === 'ready' || ev.state === 'off') { if (S.caption) S.caption.present = true; if (openModal === 'mSettings') renderCaptionNote(); } break;
     case 'fullscreen': if (window.Share) window.Share.onFullscreen(ev); break;
