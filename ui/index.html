@@ -183,6 +183,8 @@
     <label>Screen share and voice</label>
     <div class="seg" id="shareModeSeg"><button data-v="one">One way</button><button data-v="two">Two way</button></div>
     <div class="muted small">What the Share button does: one way sends your screen and voice; two way also asks the contact to share theirs. The ▾ next to the button switches it per share.</div>
+    <div class="seg" id="videoCodecSeg"><button data-v="smooth">Smooth</button><button data-v="sharp">Sharp text</button></div>
+    <div class="muted small">Picture: smooth (H.264) is low-latency and easy on the processor, best for control and motion, and is the default. Sharp text (VP9) keeps small text crisper but uses more processor. Applies to the next share you start.</div>
     <div class="row"><input id="setTurn" placeholder="call server host:port" spellcheck="false"><input id="setTurnUser" placeholder="user" spellcheck="false" style="max-width:120px"><input id="setTurnPass" type="password" placeholder="password" style="max-width:150px"></div>
     <div class="muted small">The call server (STUN/TURN) passes the share between two home networks that cannot reach each other directly. It only sees encrypted media. Leave the host empty to allow direct and local-network shares only.</div>
     <label class="check"><input type="checkbox" id="setCallsRelayOnly"> Route shares through the call server only (hides your IP address from the contact)</label>

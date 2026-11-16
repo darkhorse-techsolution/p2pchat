@@ -365,7 +365,7 @@ function world({ platform = 'linux', settings = {}, open = true } = {}) {
     ok('N1 no notice up: nothing to go through', card.through({ x: 960, y: 1100 }) === false);
     card.show({ text: 'Bob sees this screen', theme: 'dark' });
     const w = made[0], b = w.getBounds();
-    ok('N1 the notice sits at the bottom centre of the shared display', b.width === 440 && b.height === 76 && b.x === 740 && b.y === 1160 - 76 - 14);
+    ok('N1 the notice sits at the bottom centre of the shared display', b.width === 300 && b.height === 40 && b.x === 810 && b.y === 1160 - 40 - 14);
     ok('N1 a click from the far side beside it is none of its business', card.through({ x: 100, y: 100 }) === false && card.through({ x: b.x - 10, y: b.y + 20 }) === false && w.ignore.length === 0);
     ok('N1 one inside it: the notice lets the mouse through', card.through({ x: b.x + 200, y: b.y + 30 }) === true && w.ignore.join() === 'true');
     ok('N1 the button up that follows keeps it open, without a second switch', card.through({ x: b.x + 200, y: b.y + 30 }) === true && w.ignore.join() === 'true');

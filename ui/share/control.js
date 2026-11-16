@@ -213,6 +213,7 @@
     if (other && other !== sess) { stopTaking(other); dc(other, { t: 'rel' }); }
     ctl.take = true; C.taking = sess; ctl.move = null; ctl.moveAt = 0;
     clearTimeout(ctl.flush); ctl.flush = null;
+    if (K.tune.setBuffer) K.tune.setBuffer(sess);   // I drive their screen now: hold less, so the pointer feels live
     K.clip.sync(sess);
     K.viewer.applyCtl(); K.viewer.syncKeys();
   }
@@ -223,6 +224,7 @@
     clearTimeout(ctl.askTimer); ctl.asked = false; ctl.askedClip = false;
     if (ctl.take) { ctl.take = false; if (!sess.closed) dc(sess, { t: 'r' }); }   // nothing stays pressed over there
     ctl.takeClip = false; ctl.cursor = null;
+    if (K.tune.setBuffer) K.tune.setBuffer(sess);   // only watching now: a cushion again on a relayed path
     if (C.taking === sess) C.taking = null;
     K.clip.sync(sess);   // their clipboard was shared with my control of their screen: it ends here as well
     K.viewer.applyCtl(); K.viewer.syncKeys();

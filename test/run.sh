@@ -14,6 +14,7 @@ echo "== clip";    "$ELECTRON" test/clip-test.js || exit 1
 echo "== share";   "$ELECTRON" test/share-test.js || exit 1
 echo "== unattended"; "$ELECTRON" test/unattended-test.js || exit 1
 echo "== viewer"; "$ELECTRON" test/viewer-test.js || exit 1
+echo "== speed"; "$ELECTRON" test/speed-test.js || exit 1
 echo "== theme contrast"; node test/theme-contrast.js | tail -1 || exit 1
 echo
 echo "UI flow: start two instances with --remote-debugging-port=9411 / 9412 and fresh --instance names, then run test/ui/flow.sh"

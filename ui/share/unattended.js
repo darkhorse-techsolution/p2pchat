@@ -27,7 +27,7 @@
   // contact is the whole audience; with anyone else watching it counts.
   function sync() {
     const n = hosted.size, only = n === 1 && K.cast.members.size === 1 ? K.nameOf([...hosted][0]) : '';
-    const text = !n ? '' : only ? `${only} sees this screen and can use its mouse and keyboard` : n === 1 ? 'A contact sees this screen and can use its mouse and keyboard' : `${n} contacts see this screen and can use its mouse and keyboard`;
+    const text = !n ? '' : only ? `${only} is connected to this computer` : n === 1 ? 'A contact is connected to this computer' : `${n} contacts are connected to this computer`;
     const now = JSON.stringify([[...hosted].sort(), text]);
     if (now === told) return;
     told = now;

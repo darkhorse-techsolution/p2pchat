@@ -349,6 +349,7 @@ function renderSettings() {
   $('setPopups').checked = S.settings.popups !== false; $('setPopupText').checked = S.settings.popupText !== false;
   $('setCodeWrap').checked = S.prefs.codeWrap !== false; $('setCodeCollapse').checked = S.prefs.codeCollapse !== false;
   document.querySelectorAll('#shareModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.shareMode || 'one')));
+  document.querySelectorAll('#videoCodecSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.videoCodec || 'smooth')));
   $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
   $('aboutLine').textContent = `P2P Chat ${S.version}${S.packaged ? '' : ' (dev)'} · log: ${S.logPath || 'n/a'}`;
   const v = $('vaultInfo'); v.className = 'vault ' + (S.vaultSecure ? 'ok' : 'warn');
@@ -363,6 +364,7 @@ $('setPopups').onchange = savePopups; $('setPopupText').onchange = savePopups;
 $('setCodeWrap').onchange = async (e) => { S.prefs.codeWrap = await window.api.setPref('codeWrap', e.target.checked); if (S.current) renderMessages(false); };
 $('setCodeCollapse').onchange = async (e) => { S.prefs.codeCollapse = await window.api.setPref('codeCollapse', e.target.checked); if (S.current) renderMessages(false); };
 $('popupPreview').onclick = () => window.api.testPopup();
+document.querySelectorAll('#videoCodecSeg button').forEach((b) => (b.onclick = async () => { S.settings.videoCodec = await window.api.setPref('videoCodec', b.dataset.v); renderSettings(); toast(b.dataset.v === 'sharp' ? 'Sharp text (VP9) for your next share' : 'Smooth (H.264) for your next share', 'ok'); }));
 document.querySelectorAll('#shareModeSeg button').forEach((b) => (b.onclick = async () => { S.settings.shareMode = await window.api.setPref('shareMode', b.dataset.v); renderSettings(); if (window.Share) window.Share.render(); }));
 const saveTurn = async () => { S.turn = { host: await window.api.setPref('turn', $('setTurn').value), user: await window.api.setPref('turnUser', $('setTurnUser').value), pass: await window.api.setPref('turnPass', $('setTurnPass').value) }; toast('Call server saved. It applies to the next share.', 'ok'); };
 $('setTurn').onchange = saveTurn; $('setTurnUser').onchange = saveTurn; $('setTurnPass').onchange = saveTurn;

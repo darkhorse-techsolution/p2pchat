@@ -74,16 +74,18 @@
     pc.onicecandidate = ({ candidate }) => send(sess, { op: 'ice', candidate: candidate ? candidate.toJSON() : null });
     pc.ontrack = (e) => {
       const t = e.track, r = sess.remote;
-      if (t.kind === 'video') { if (r.video !== t) { r.video = t; r.view = new MediaStream([t]); } K.tune.receiver(e.receiver, 'video'); }   // view: what the video element plays, the picture alone
+      if (t.kind === 'video') { if (r.video !== t) { r.video = t; r.view = new MediaStream([t]); } K.tune.receiver(e.receiver, 'video', sess); }   // view: what the video element plays, the picture alone
       else { r.audio = t; K.tune.receiver(e.receiver, 'audio'); K.viewer.audioFor(sess); }
       t.onmute = () => K.paint(); t.onunmute = () => K.paint(); t.onended = () => K.paint();
       K.rec.sync(sess); K.paint();
     };
     pc.ondatachannel = (e) => adoptChannel(sess, e.channel, true);
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'connected') { sess.everConnected = true; clearTimeout(sess.connectTimer); sess.connectTimer = null; }
-      if (pc.connectionState === 'failed') { toast(`Screen share with ${K.label(sess.pub, 'a contact')} failed. Check the call server in Settings.`, 'err'); close(sess, 'failed'); }
-      else K.paint();
+      const cs = pc.connectionState;
+      if (cs === 'connected') { sess.everConnected = true; clearTimeout(sess.connectTimer); sess.connectTimer = null; recovered(sess); }
+      else if ((cs === 'disconnected' || cs === 'failed') && sess.everConnected && !sess.closed) reconnecting(sess, cs);
+      else if (cs === 'failed') { toast(`Screen share with ${K.label(sess.pub, 'a contact')} failed. Check the call server in Settings.`, 'err'); close(sess, 'failed'); }
+      K.paint();
     };
     sess.statsTimer = setInterval(() => pollStats(sess), 2000);
   }
@@ -111,6 +113,30 @@
     }, K.CONNECT_MS);
   }
 
+  // A connection that was up and dropped (a Wi-Fi blip, sleep, a changed network) is not closed. ICE is
+  // restarted to punch a fresh path, and only if nothing comes back within RECONNECT_MS is the session let
+  // go. The side that keeps its offer (impolite) drives the restart; the other waits for the offer it brings.
+  // Signaling rides the chat relay, which does not depend on the media path, so the restart gets through
+  // while the media is down. 'failed' will not heal by itself and is restarted at once; 'disconnected' often
+  // heals and is given ICE_WAIT_MS first.
+  function reconnecting(sess, cs) {
+    if (sess.closed) return;
+    if (!sess.reconnectAt) {
+      sess.reconnectAt = Date.now();
+      toast(`Reconnecting to ${K.label(sess.pub, 'the contact')}…`);
+      window.api.log(`share ${sess.id}: ${cs}, reconnecting`).catch(() => {});
+      sess.reconnectTimer = setTimeout(() => { if (!sess.closed && sess.pc && sess.pc.connectionState !== 'connected') { send(sess, { op: 'bye' }); close(sess, 'lost'); } }, K.RECONNECT_MS);
+    }
+    clearTimeout(sess.iceRetry);
+    if (!sess.polite) sess.iceRetry = setTimeout(() => { if (!sess.closed && sess.pc && sess.pc.connectionState !== 'connected') { try { sess.pc.restartIce(); } catch {} } }, cs === 'failed' ? 0 : K.ICE_WAIT_MS);
+  }
+  function recovered(sess) {
+    if (!sess.reconnectAt) return;
+    sess.reconnectAt = 0; clearTimeout(sess.reconnectTimer); clearTimeout(sess.iceRetry); sess.reconnectTimer = sess.iceRetry = null;
+    toast(`Reconnected to ${K.label(sess.pub, 'the contact')}`, 'ok');
+    window.api.log(`share ${sess.id}: reconnected`).catch(() => {});
+  }
+
   // Every frame says which share protocol this build speaks (v). A peer whose frames carry none is 0.7.1 or older.
   function send(sess, f) {
     if (sess.closed) return;
@@ -135,6 +161,7 @@
       const now = Date.now(), dt = (now - (sess.lastT || now)) / 1000 || 1;
       const kbpsIn = sess.lastIn !== undefined ? Math.round((inB - sess.lastIn) * 8 / 1000 / dt) : 0, kbpsOut = sess.lastOut !== undefined ? Math.round((outB - sess.lastOut) * 8 / 1000 / dt) : 0;
       sess.lastIn = inB; sess.lastOut = outB; sess.lastT = now; sess.path = path; sess.rtt = rtt; sess.codec = codec;
+      K.tune.setBuffer(sess);   // direct or relayed is known from the path: hold little on a direct path, a small cushion on a relayed one
       const q = K.tune.readout(sess, st), kb = (b) => (typeof b === 'number' ? `${Math.round(b / 1000)}k` : '-');
       sess.stats = (sess.remote.screen ? `${w}×${h} · ${fps} fps · ${(kbpsIn / 1000).toFixed(1)} Mb/s in` + (q.out ? ` · buf ${q.bufMs} (+${q.holdMs} sync) want ${q.wantMs} dec ${q.decMs} ms · shown +${q.shownMs} ms · nack ${q.nack} frz ${q.freeze}` : '') : '')
         + (sess.screenTrack ? `${sess.remote.screen ? ' · ' : ''}${(kbpsOut / 1000).toFixed(1)} Mb/s out` + (q.encN ? ` · enc ${Math.round(q.inFps || 0)}>${Math.round(q.encFps || 0)} fps ${q.encMs} ms skip ${q.skip}${q.limit && q.limit !== 'none' ? ' ' + q.limit : ''} ${q.hint}` : '') : '')
@@ -157,7 +184,7 @@
     sess.closed = true;                 // first: everything that was waiting on this session checks it and stops
     if (map.get(sess.pub) === sess) map.delete(sess.pub);
     remember(sess, why);
-    clearInterval(sess.statsTimer); clearTimeout(sess.connectTimer);
+    clearInterval(sess.statsTimer); clearTimeout(sess.connectTimer); clearTimeout(sess.reconnectTimer); clearTimeout(sess.iceRetry);
     sess.markSeen();
     // every part of the share code lets go of the session, in this order
     K.control.sessionClosed(sess);
@@ -169,6 +196,7 @@
     if (why === 'bye') toast(`${name} ended the screen share`);
     if (why === 'offline') toast(`Screen share ended: ${K.label(sess.pub, 'a contact', hush)} went offline`, 'err');
     if (why === 'refused') toast(`${name} cannot take the screen share right now (they are in another one)`, 'err');
+    if (why === 'lost') toast(`Screen share with ${name} dropped and could not reconnect`, 'err');
     K.paint(); renderContacts();
   }
   function end(sess) { send(sess, { op: 'bye' }); close(sess, 'ended'); }

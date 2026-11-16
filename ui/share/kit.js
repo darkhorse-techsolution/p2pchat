@@ -10,6 +10,8 @@
   K.PROTO = 2;             // sent as `v` on every share frame; a peer that sends none is 0.7.1 or older
   K.MAX_SESSIONS = 6;      // sessions at once, one per contact; an opener past it is answered with bye
   K.CONNECT_MS = 30000;    // a session that has not connected this long after its first offer is given up
+  K.RECONNECT_MS = 25000;  // a session that was connected and dropped (a blip, sleep, a changed network) is given this long to come back by restarting ICE before it is let go
+  K.ICE_WAIT_MS = 2500;    // 'disconnected' often heals itself; wait this long before forcing an ICE restart ('failed' is forced at once)
   K.REJOIN_MS = 60000;     // a viewer that went offline while others still get my screen is added again by itself for this long
   K.BACK_MS = 3000;        // ... and that long after it is back: an app that has just started is connected before its window can take a share frame
   K.DENY_COOLDOWN_MS = 10000;   // after a Deny the same contact's next control request opens no dialog for this long

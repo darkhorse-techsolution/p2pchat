@@ -18,19 +18,40 @@
   const MAX_AUDIENCE = 4;             // contacts that get my screen at once, from the one capture; read as K.tune.MAX_AUDIENCE where it is used
   const MOVE_EV = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';   // raw: not held to the next frame
 
-  // The viewer plays what arrives as soon as it arrives: no jitter-buffer cushion for a share
-  // that is driven live (Chromium hints; both ignored where unsupported).
-  function lowLatency(receiver) {
-    try { receiver.jitterBufferTarget = 0; } catch {}
-    try { receiver.playoutDelayHint = 0; } catch {}
+  // How much the viewer holds before it plays a frame. A direct path on a LAN rarely loses a packet, so it
+  // holds almost nothing and the picture is as live as it gets. A relayed path over the internet loses
+  // packets, and with nothing held each loss is a freeze; a small cushion there trades a little delay for a
+  // picture that does not stutter. While you drive the screen the cushion is kept small on every path, so the
+  // pointer stays responsive. The path is known only once the connection is up (pollStats), so it starts with
+  // a little cushion and is set again whenever the path, or whether you control, changes.
+  function bufferMs(sess) {
+    const controlling = !!(sess.ctl && sess.ctl.take);
+    if (!sess.path) return 80;                         // not known yet: enough that a lossy start does not freeze
+    if (sess.path !== 'via call server') return controlling ? 0 : 30;   // direct / LAN
+    return controlling ? 50 : 140;                     // relayed: a cushion against loss
   }
-  // VP9 first: its screen-content mode keeps text sharp at a given rate. The rest in Chromium's order.
+  function setBuffer(sess) {
+    const r = sess.remote && sess.remote.videoReceiver;
+    if (!r) return;
+    const ms = bufferMs(sess);
+    if (ms === sess.bufSet) return;
+    sess.bufSet = ms;
+    try { r.jitterBufferTarget = ms; } catch {}
+    try { r.playoutDelayHint = ms / 1000; } catch {}
+  }
+  // Which video codec the offer puts first. Settings 'smooth' (default) puts H.264 first: it has a hardware
+  // encoder and decoder on most machines, so it is low-CPU, high frame rate and low latency, the way a remote
+  // desktop should feel. 'sharp' puts VP9 first: its screen-content mode keeps text crisper at a given rate,
+  // at the cost of a software encoder on most machines. The other codecs follow in Chromium's order; the two
+  // ends still agree on whatever they both have, so an older peer interoperates.
   function preferCodecs(pc, sender) {
     try {
       const tr = pc.getTransceivers().find((t) => t.sender === sender);
       const caps = RTCRtpReceiver.getCapabilities('video');
       if (!tr || !tr.setCodecPreferences || !caps) return;
-      const rank = (c) => (/vp9/i.test(c.mimeType) ? 0 : 1);
+      const sharp = typeof S !== 'undefined' && S.settings && S.settings.videoCodec === 'sharp';
+      const first = sharp ? /vp9/i : /h264/i, second = sharp ? /h264/i : /vp9/i;
+      const rank = (c) => (first.test(c.mimeType) ? 0 : second.test(c.mimeType) ? 1 : 2);
       tr.setCodecPreferences([...caps.codecs].sort((a, b) => rank(a) - rank(b)));
     } catch (e) { console.warn('codec preference', e.message); }
   }
@@ -103,7 +124,8 @@
     micConstraints: () => ({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }),
     hint: (controlled) => (controlled ? 'motion' : 'detail'),   // smooth over sharp while they drive
     codecs: preferCodecs,
-    receiver: (receiver, kind) => { if (kind === 'video') lowLatency(receiver); },
+    receiver: (receiver, kind, sess) => { if (kind === 'video' && sess) { sess.remote.videoReceiver = receiver; setBuffer(sess); } },
+    setBuffer,
     tier, encoding, sender,
     streamFor: (sess, kind) => (kind === 'audio' && SPLIT_MIC && sess.ver >= 2 ? (sess.micLocal ||= new MediaStream()) : sess.local),
     sendMove, readout,

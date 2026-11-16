@@ -9,7 +9,7 @@
 // The session depends on the notice, not the other way round: if the window cannot be shown or goes
 // away while a session runs, `onGone` ends the session.
 // Kept apart from main.js; it gets Electron's parts handed in.
-const W = 440, H = 76;
+const W = 300, H = 40;   // a small pill, not a banner: it stays as the one on-screen sign that a contact is connected, kept out of the way
 
 function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac, isLinux, onStop, onGone, log }) {
   let card = null, live = false, last = null;
