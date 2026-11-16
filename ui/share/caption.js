@@ -67,7 +67,7 @@
   // Start, stop or switch the tap: my own microphone while someone hears it and the setting is on, else the
   // share currently on screen. Called whenever either can change (every paint of the share controls).
   function sync() {
-    const voice = outOn() && K.mic && K.mic.state === 'live' ? (K.mic.voice || K.mic.src) : null;   // voice: the microphone alone, where the device's track carries more
+    const voice = outOn() && K.mic && K.mic.state === 'live' ? K.mic.voice : null;   // the microphone alone: the device's own track may be a mix with the computer's sound
     const b = K.viewer.bound;
     const want = voice && hearers().length ? { pub: SELF, track: voice, out: true }
       : enabled() && b && b.remote && b.remote.audio ? { pub: b.pub, track: b.remote.audio } : null;

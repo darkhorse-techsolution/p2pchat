@@ -351,7 +351,7 @@ function renderSettings() {
   $('setCodeWrap').checked = S.prefs.codeWrap !== false; $('setCodeCollapse').checked = S.prefs.codeCollapse !== false;
   document.querySelectorAll('#shareModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.shareMode || 'one')));
   document.querySelectorAll('#videoCodecSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === (S.settings.videoCodec || 'smooth')));
-  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setAssistantBridge').checked = !!S.settings.assistantBridge; $('setCaptionsOut').checked = !!S.settings.captionsOut; $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
+  $('setTurn').value = S.turn?.host ?? ''; $('setTurnUser').value = S.turn?.user ?? ''; $('setTurnPass').value = S.turn?.pass ?? ''; $('setCallsRelayOnly').checked = !!S.settings.callsRelayOnly; $('setAssistantBridge').checked = !!S.settings.assistantBridge; $('setCaptionsOut').checked = !!S.settings.captionsOut; $('setShareSound').checked = !!S.settings.shareSound; { const can = window.api.platform === 'darwin' || window.api.platform === 'win32'; $('setShareSoundRow').classList.toggle('hidden', !can); $('setShareSoundHelp').classList.toggle('hidden', !can); } $('setRecordShares').checked = !!S.settings.recordShares; $('setClipboardSync').checked = S.settings.clipboardSync !== false; $('setCaptions').checked = !!S.settings.captions; renderCaptionNote(); $('recordingsDir').textContent = S.recordingsDir || '';
   $('aboutLine').textContent = `P2P Chat ${S.version}${S.packaged ? '' : ' (dev)'} · log: ${S.logPath || 'n/a'}`;
   const v = $('vaultInfo'); v.className = 'vault ' + (S.vaultSecure ? 'ok' : 'warn');
   v.textContent = (S.vaultSecure ? 'Vault key held by the OS keychain · ' : S.packaged ? 'Vault key stored unprotected (no keychain available) · ' : 'Dev run: vault key is a plain file, Keychain not used · ') + S.vaultPath;
@@ -374,6 +374,7 @@ $('setAssistantBridge').onchange = async (e) => { S.settings.assistantBridge = a
 $('setRecordShares').onchange = async (e) => { S.settings.recordShares = await window.api.setPref('recordShares', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setClipboardSync').onchange = async (e) => { S.settings.clipboardSync = await window.api.setPref('clipboardSync', e.target.checked); if (window.Share) window.Share.onSettings(); };
 $('setCaptions').onchange = async (e) => { S.settings.captions = await window.api.setPref('captions', e.target.checked); renderCaptionNote(); if (window.Share) window.Share.onSettings(); };
+$('setShareSound').onchange = async (e) => { S.settings.shareSound = await window.api.setPref('shareSound', e.target.checked); };
 $('setCaptionsOut').onchange = async (e) => { S.settings.captionsOut = await window.api.setPref('captionsOut', e.target.checked); renderCaptionNote(); if (window.Share) window.Share.onSettings(); };
 function renderCaptionNote() {
   const note = $('captionNote'); if (!note) return;

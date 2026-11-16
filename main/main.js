@@ -163,7 +163,7 @@ async function loadVaultKey(dir) {
 }
 
 let engine = null, store = null, keyInfo = null, win = null, tray = null, quitting = false, hotkeyOk = false, modeHotkeyOk = false;
-const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true, videoCodec: 'smooth', assistantBridge: false, captionsOut: false });
+const settings = () => (store.data.settings ||= { hotkey: DEFAULT_HOTKEY, modeHotkey: DEFAULT_MODE_HOTKEY, fullHotkey: DEFAULT_FULL_HOTKEY, mode: 'overlap', discovery: false, theme: 'system', relay: DEFAULT_RELAY, opacity: 1, popups: true, popupText: true, sidebarWidth: 300, sidebarCollapsed: false, codeWrap: true, codeCollapse: true, shareMode: 'one', callsRelayOnly: false, recordShares: false, clipboardSync: true, videoCodec: 'smooth', assistantBridge: false, captionsOut: false, shareSound: false });
 // Settings added after a vault was created are read with defaults (an existing vault lacks the keys).
 const turnCfg = () => { const st = settings(); return { host: st.turn ?? DEFAULT_TURN.host, user: st.turnUser ?? DEFAULT_TURN.user, pass: st.turnPass ?? DEFAULT_TURN.pass }; };
 // Public STUN as a backup for finding a DIRECT path between the two machines (the call server is the
@@ -781,7 +781,7 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, captionsOut: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, captionsOut: (v) => !!v, shareSound: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
 // One recognizer serves both caption settings: their voice over the video, my voice into the chat.
 handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions' || key === 'captionsOut') captioner.setEnabled(!!(settings().captions || settings().captionsOut)); if (key === 'assistantBridge') bridge.setEnabled(settings().assistantBridge); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });
@@ -924,7 +924,15 @@ async function boot() {
     if (!win || win.isDestroyed() || req.frame !== win.webContents.mainFrame) return cb(null);
     const { display, want } = targetDisplay();
     desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
-      .then((sources) => { const src = pickSource(sources, display, want); log.info('display media', src ? src.name : 'no source'); if (src) sharedDisplay = display; cb(src ? { video: src } : null); })
+      .then((sources) => {
+        const src = pickSource(sources, display, want);
+        // This computer's sound rides the same capture when the page asked for it and Settings has it on. 'loopback' only:
+        // 'loopbackWithMute' would silence the speakers here, and on Linux neither delivers sound (Electron 45), so it is not offered there.
+        const sound = !!src && !!req.audioRequested && !!settings().shareSound && (isMac || isWin);
+        log.info('display media', src ? src.name : 'no source', sound ? '+ computer sound' : '');
+        if (src) sharedDisplay = display;
+        cb(src ? (sound ? { video: src, audio: 'loopback' } : { video: src }) : null);
+      })
       .catch((e) => { log.error('display media', e); cb(null); });
   });
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());

@@ -56,6 +56,7 @@ module.exports = {
       LSUIElement: true,                       // no Dock icon from the first frame, not only after app.dock.hide()
       NSHumanReadableCopyright: 'AGPL-3.0',
       NSMicrophoneUsageDescription: 'Your voice is sent to the contact while you share your screen.',
+      NSAudioCaptureUsageDescription: 'With "Also send this computer\'s sound" on in Settings, what this computer plays is sent to the contact while you share your screen.',
     },
   },
   dmg: { sign: false, contents: [{ x: 130, y: 220 }, { x: 410, y: 220, type: 'link', path: '/Applications' }] },

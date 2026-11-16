@@ -190,6 +190,8 @@
     <label class="check"><input type="checkbox" id="setCallsRelayOnly"> Route shares through the call server only (hides your IP address from the contact)</label>
     <label class="check"><input type="checkbox" id="setRecordShares"> Record incoming screen shares to a file (their screen and voice)</label>
     <label class="check"><input type="checkbox" id="setCaptions"> Live captions of a contact's voice while you watch their share (on-device, downloads once)</label>
+    <label class="check" id="setShareSoundRow"><input type="checkbox" id="setShareSound"> Also send this computer's sound when I share (a clip or a video you play)</label>
+    <div class="muted small" id="setShareSoundHelp">Mixed with your microphone into the sound the contact already gets, so nothing changes on their side; the Sharing pill reads "sound" while it goes out. The microphone button mutes all of it, the computer's sound included. macOS asks once for System Audio Recording. With speakers instead of headphones the others may hear a clip twice. Applies to the next share you start; never in an unattended session.</div>
     <label class="check"><input type="checkbox" id="setCaptionsOut"> Send captions of what I say during a share, as labeled messages in the chat</label>
     <div class="muted small">For a contact on a connection too weak for the picture: your microphone is turned into text on this computer and each finished line goes into the chat, marked Caption, where you see it too. Only your microphone, only while it is on and someone hears it in a share; never the computer's sound. The Sharing pill reads "captions" while it runs. English; both sides need 0.13.0 for the label.</div>
     <p class="muted" id="captionNote" hidden></p>

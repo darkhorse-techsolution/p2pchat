@@ -21,9 +21,9 @@ function world(settings) {
       send: async (pub, m) => { w.sent.push({ pub, ...m }); return m; } } });
   w.K.sessions = { all: () => w.list };
   w.K.viewer = { bound: null };
-  w.K.mic = { state: 'idle', src: null };
+  w.K.mic = { state: 'idle', src: null, voice: null };
   w.track = (id) => ({ id, enabled: true, readyState: 'live' });
-  w.micUp = (id = 'mic') => { w.K.mic.state = 'live'; w.K.mic.src = w.track(id); return w.K.mic.src; };
+  w.micUp = (id = 'mic') => { w.K.mic.state = 'live'; w.K.mic.voice = w.track(id); w.K.mic.src = { id: 'mix-of-' + id }; return w.K.mic.voice; };   // src stands for a mix with the computer's sound: never to be read
   w.hears = (pub) => { const x = { pub, closed: false, micTrack: w.track('lease-' + pub), remote: { audio: null } }; w.list.push(x); return x; };
   w.liveTap = () => w.taps.filter((t) => !t.ctx.closed);
   w.say = (text, final = true, pub = '~self') => w.K.caption.onText({ pub, text, final });

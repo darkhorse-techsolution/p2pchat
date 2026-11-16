@@ -16,6 +16,24 @@
   // The one place a contact leaves the audience: an unattended session with it (share/unattended.js) is over with that.
   const drop = (pub) => { const m = cast.members.get(pub); if (m) { clearTimeout(m.timer); clearTimeout(m.back); cast.members.delete(pub); if (K.unattended) K.unattended.left(pub); } };
 
+  // --- this computer's sound ---------------------------------------------------------
+  // Settings, "Also send this computer's sound when I share": what plays here (a clip, a video) goes out with the
+  // microphone. The capture of the display brings the sound (macOS and Windows), and it is mixed with the microphone
+  // into the one audio track a contact gets, so nothing changes on their side and the microphone button mutes all of
+  // it. Only in a share somebody is at: an unattended share sends no audio at all. Captions of my voice read the
+  // microphone alone (mic.voice), never this mix.
+  const wantSound = () => typeof S !== 'undefined' && !!(S.settings && S.settings.shareSound) && (window.api.platform === 'darwin' || window.api.platform === 'win32');
+  function mixer(voice, sound) {
+    const ctx = new AudioContext(), dest = ctx.createMediaStreamDestination(), nodes = { voice: null, sound: null };
+    const set = (which, track) => {
+      if (nodes[which]) { try { nodes[which].disconnect(); } catch {} nodes[which] = null; }
+      if (track) { nodes[which] = ctx.createMediaStreamSource(new MediaStream([track])); nodes[which].connect(dest); }
+    };
+    set('voice', voice); set('sound', sound);
+    if (ctx.resume) ctx.resume().catch(() => {});
+    return { track: dest.stream.getAudioTracks()[0], set, has: (which) => !!nodes[which], close: () => { try { ctx.close(); } catch {} } };
+  }
+
   // --- the two devices ---------------------------------------------------------------
   // Starting a device takes several awaits (the permission, then the device), so every call that arrives
   // while one start runs waits for that same start: one click or ten, one capture. `open` resolves to
@@ -47,22 +65,46 @@
   const capture = K.capture = source(async () => {
     const perm = await window.api.screenPermission();   // macOS: ask before trying, with instructions instead of a capture error
     if (perm !== 'ok') { window.showScreenPermission(perm); return { err: '' }; }
-    let track;
-    try { track = (await navigator.mediaDevices.getDisplayMedia(K.tune.displayConstraints())).getVideoTracks()[0]; }
+    // The computer's sound comes with the capture. Not for a share that starts unattended, and not while a
+    // microphone runs that was started without the mix: its track could not carry the sound.
+    const late = wantSound() && !capture.quiet && mic.state === 'live' && !mic.mix;
+    const sound = wantSound() && !capture.quiet && !late;
+    let track, snd = null;
+    try { const stream = await navigator.mediaDevices.getDisplayMedia(K.tune.displayConstraints(sound)); track = stream.getVideoTracks()[0]; if (sound) snd = stream.getAudioTracks()[0] || null; }
     catch (e) { toast(`Could not capture the screen: ${e.message}`, 'err'); return { err: '' }; }
+    if (late) toast('This computer\'s sound joins with your next share: the microphone was already on');
+    if (sound) {
+      // macOS without the permission hands over a track that has already ended, and no error
+      if (snd && snd.readyState === 'live') { capture.sound = snd; if (mic.mix) mic.mix.set('sound', snd); }
+      else { if (snd) snd.stop(); toast(window.api.platform === 'darwin' ? 'This computer\'s sound was not captured. Allow P2P Chat under System Settings > Privacy & Security > Screen & System Audio Recording, then share again.' : 'This computer\'s sound was not captured', 'err'); }
+    }
     await K.tune.capture(track);
     track.onended = () => stop('capture');              // the OS ended the capture
     mic.audienceOn = true;                              // a new capture starts with the microphone on; after that only a mute or a click changes it
     return { track };
   }, () => {
+    if (capture.sound) { capture.sound.stop(); capture.sound = null; if (mic.mix) mic.mix.set('sound', null); }
     for (const pub of [...cast.members.keys()]) drop(pub);
     window.api.captureEnded().catch(() => {});           // main forgets the shared display, and with it any control of it
   }, () => cast.leasing > 0);   // held only for an add() that has not taken its lease: one that waits on the microphone (a permission prompt can stay open for minutes) holds the microphone, not the screen
+  capture.sound = null;    // this computer's sound, when the capture brought it
+  capture.quiet = false;   // the running capture was started for an unattended share: no sound was asked for
   const mic = K.mic = source(async () => {
-    if (!(await window.api.micPermission())) return { err: 'Microphone access was not allowed; sharing without sound' };
-    try { return { track: (await navigator.mediaDevices.getUserMedia(K.tune.micConstraints())).getAudioTracks()[0] }; }
-    catch (e) { return { err: `Microphone: ${e.message}` }; }
-  }, null, () => cast.adding > 0);
+    let voice = null, err = '';
+    if (!(await window.api.micPermission())) err = 'Microphone access was not allowed; sharing without sound';
+    else { try { voice = (await navigator.mediaDevices.getUserMedia(K.tune.micConstraints())).getAudioTracks()[0]; } catch (e) { err = `Microphone: ${e.message}`; } }
+    if (!wantSound()) { mic.voice = voice; return voice ? { track: voice } : { err }; }
+    // With the computer's sound: the device's track is the mix, and the microphone is one of its two inputs.
+    // The sound joins and leaves with the capture (mic.mix.set), whichever of the two started first.
+    if (!voice && !capture.sound) return { err };
+    let mix;
+    try { mix = mixer(voice, capture.sound); } catch { mic.voice = voice; return voice ? { track: voice } : { err }; }   // no audio graph here: the microphone alone, as without the setting
+    mic.mix = mix; mic.voice = voice;
+    if (!voice) toast('No microphone: only this computer\'s sound is sent');
+    return { track: mix.track };
+  }, () => { if (mic.mix) { mic.mix.close(); mic.mix = null; if (mic.voice) mic.voice.stop(); } mic.voice = null; }, () => cast.adding > 0);
+  mic.voice = null;        // the microphone's own track: what captions of my voice read. The device's track (src) is this, or the mix
+  mic.mix = null;
   mic.audienceOn = true;   // the microphone is one switch for everyone who gets my screen; a session where I only watch has its own
 
   // --- the audience ------------------------------------------------------------------
@@ -113,6 +155,7 @@
     const gone = () => sess.closed || cast.members.get(pub) !== me;
     let leased = false; const took = () => { if (!leased) { leased = true; cast.leasing--; } };   // this call no longer holds the capture: it has its lease, or it gave up
     try {
+      if (capture.state === 'idle' && !capture.pending) capture.quiet = noMic;   // a capture that starts for an unattended share takes no sound
       const ok = await capture.acquire();
       await sess.ready;
       if (!ok || gone()) {

@@ -18,6 +18,7 @@ echo "== unattended"; "$ELECTRON" test/unattended-test.js || exit 1
 echo "== viewer"; "$ELECTRON" test/viewer-test.js || exit 1
 echo "== speed"; "$ELECTRON" test/speed-test.js || exit 1
 echo "== caption"; "$ELECTRON" test/caption-test.js || exit 1
+echo "== sound"; "$ELECTRON" test/sound-test.js || exit 1
 echo "== bridge"; "$ELECTRON" test/bridge-test.js || exit 1
 echo "== mcp"; "$ELECTRON" test/mcp-test.js || exit 1
 echo "== theme contrast"; node test/theme-contrast.js | tail -1 || exit 1

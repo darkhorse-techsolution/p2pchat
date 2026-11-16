@@ -119,7 +119,7 @@
 
   K.tune = {
     MAX_W, MAX_H, FPS, VIDEO_KBPS, MOVE_MS, MOVE_BUF, ASK_MS, GIVE_ASK_MS, SPLIT_MIC, MAX_AUDIENCE, MOVE_EV,
-    displayConstraints: () => ({ video: { frameRate: { ideal: FPS, max: FPS } }, audio: false }),
+    displayConstraints: (sound) => ({ video: { frameRate: { ideal: FPS, max: FPS } }, audio: sound ? { restrictOwnAudio: true } : false }),   // restrictOwnAudio: without this app's own playback, so a contact's voice is not sent back to them
     capture: async (track) => { try { await track.applyConstraints({ width: { max: MAX_W }, height: { max: MAX_H }, frameRate: { ideal: FPS, max: FPS } }); } catch {} },
     micConstraints: () => ({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }),
     hint: (controlled) => (controlled ? 'motion' : 'detail'),   // smooth over sharp while they drive
