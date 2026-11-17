@@ -32,6 +32,7 @@ const FRED = 'fOIEbc-Daaaa1111', PC = 'bUcOv4CKbbbb2222', TWO = 'bUcOv4ZZcccc333
   const cp = msgOut({ id: 'c', from: 'peer', ts: 3, kind: 'caption', text: 'So the first slide is the roadmap.', lang: '', status: 'delivered' });
   ok('B2 a caption keeps its kind and its text', cp.kind === 'caption' && cp.text === 'So the first slide is the roadmap.' && cp.from === 'them' && cp.lang === undefined);
   ok('B2 a contact\'s message is from "them"', msgOut({ from: 'peer', kind: 'text', text: 'hi' }).from === 'them');
+  ok('B2 a caption of what a computer played is a line, never its words', msgOut({ id: 'd', from: 'peer', ts: 4, kind: 'caption', text: 'words from a video', lang: 'sound', status: 'delivered' }).text === '[caption of computer sound]');
 }
 
 // B3: where the socket goes
@@ -135,6 +136,27 @@ function client(p) {
   const gone = client(info.path); gone.write({ auth: info.token }); await gone.loose();
   gone.req('wait', { timeoutMs: 60000 }); await sleep(30); gone.sock.destroy(); await gone.closed; await sleep(20);
   ok('B7 a waiter whose client left is dropped: a message later throws nothing', (() => { try { b.onMessage(FRED, { id: 'x5', from: 'peer', ts: 1, kind: 'text', text: 'late' }); return true; } catch { return false; } })());
+
+  // B7s: a caption of what a computer played (lang 'sound') is for the people in the chat, not for the assistant
+  conv[PC].push({ id: 's1', from: 'peer', ts: 4000, kind: 'caption', text: 'Hello, this is my voice.', lang: '', status: 'delivered' },
+    { id: 's2', from: 'peer', ts: 4001, kind: 'caption', text: 'words from a video they played', lang: 'sound', status: 'delivered' },
+    { id: 's3', from: 'me', ts: 4002, kind: 'caption', text: 'words from a video I played', lang: 'sound', status: 'delivered' });
+  r = (await a.req('messages', { contact: 'PC' })).result;
+  ok('B7s messages: a caption of a voice is there', r.messages.some((m) => m.id === 's1' && m.kind === 'caption' && m.text === 'Hello, this is my voice.'));
+  ok('B7s messages: a caption of what a computer played is not, from either side, and is not counted', !r.messages.some((m) => m.id === 's2' || m.id === 's3') && !JSON.stringify(r).includes('video') && r.total === r.messages.length);
+  contacts[1].last = { from: 'peer', ts: 4001, kind: 'caption', lang: 'sound', text: 'words from a video they played' };
+  const pcRow = (await a.req('contacts')).result[1];
+  ok('B7s contacts: as a chat\'s last message it is a line without its words', pcRow.last.text === '[caption of computer sound]' && pcRow.last.kind === 'caption');
+  contacts[1].last = null;
+  w = a.req('wait', { contact: 'PC', timeoutMs: 5000 });
+  done = false; w.then(() => { done = true; });
+  await sleep(30);
+  b.onMessage(PC, { id: 's4', from: 'peer', ts: 4003, kind: 'caption', text: 'more of the video', lang: 'sound' });
+  await sleep(50);
+  ok('B7s wait: it does not end a wait', !done);
+  b.onMessage(PC, { id: 's5', from: 'peer', ts: 4004, kind: 'caption', text: 'And that is the plan.', lang: '' });
+  r = (await w).result;
+  ok('B7s wait: a caption of their voice does', r.message.kind === 'caption' && r.message.text === 'And that is the plan.');
 
   // B8: limits
   const raws = [client(info.path), client(info.path), client(info.path)];   // + the one authenticated = 4

@@ -13,7 +13,7 @@ const META = (v = '2026-07-28') => ({ _meta: { 'io.modelcontextprotocol/protocol
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'p2pmcp-'));
   const sent = [];
   const contacts = [{ pub: FRED, name: 'Fred', status: 'online', unread: 2, last: { from: 'peer', ts: Date.parse('2026-11-16T14:20:00'), kind: 'text', text: 'are we still on?' } }, { pub: PC, name: 'PC', status: 'offline', unread: 0, last: null }];
-  const conv = { [FRED]: [{ id: 'a', from: 'peer', ts: Date.parse('2026-11-16T14:19:00'), kind: 'text', text: 'hello', status: 'delivered' }, { id: 'b', from: 'me', ts: Date.parse('2026-11-16T14:19:30'), kind: 'code', text: 'git push', lang: 'sh', status: 'delivered' }, { id: 'c', from: 'peer', ts: Date.parse('2026-11-16T14:20:00'), kind: 'text', text: 'are we still on?', status: 'delivered' }, { id: 'd', from: 'peer', ts: Date.parse('2026-11-16T14:21:00'), kind: 'caption', text: 'So the first slide is the roadmap.', status: 'delivered' }], [PC]: [] };
+  const conv = { [FRED]: [{ id: 'a', from: 'peer', ts: Date.parse('2026-11-16T14:19:00'), kind: 'text', text: 'hello', status: 'delivered' }, { id: 'b', from: 'me', ts: Date.parse('2026-11-16T14:19:30'), kind: 'code', text: 'git push', lang: 'sh', status: 'delivered' }, { id: 'c', from: 'peer', ts: Date.parse('2026-11-16T14:20:00'), kind: 'text', text: 'are we still on?', status: 'delivered' }, { id: 'd', from: 'peer', ts: Date.parse('2026-11-16T14:21:00'), kind: 'caption', text: 'So the first slide is the roadmap.', status: 'delivered' }, { id: 'e', from: 'peer', ts: Date.parse('2026-11-16T14:22:00'), kind: 'caption', text: 'words from a video they played', lang: 'sound', status: 'delivered' }], [PC]: [] };
   const api = { contacts: () => contacts, conversation: (pub) => conv[pub], send: (pub, m) => { sent.push({ pub, ...m }); return { id: 'n' + sent.length, from: 'me', ts: Date.now(), kind: m.kind, text: m.text, lang: m.lang, status: 'pending' }; } };
   const b = createBridge({ dir, log: { info() {}, error() {} }, version: '0.13.0', api });
   b.setEnabled(true);
@@ -69,6 +69,7 @@ const META = (v = '2026-07-28') => ({ _meta: { 'io.modelcontextprotocol/protocol
   t = await tool('read_messages', { contact: 'fred' });
   ok('M3 read_messages: a header and the chat, oldest first, You for me', /^Chat with Fred \(id fOIEbc-D, online\): all 4 messages, oldest first\./.test(t.content[0].text) && /2026-11-16 14:19 Fred: hello/.test(t.content[0].text) && /You \(code, sh\):\n```sh\ngit push\n```/.test(t.content[0].text));
   ok('M3 read_messages: a caption line is marked as one', /2026-11-16 14:21 Fred \(caption\): So the first slide is the roadmap\./.test(t.content[0].text));
+  ok('M3 read_messages: a caption of what their computer played is not in it', !/video/.test(t.content[0].text) && !/14:22/.test(t.content[0].text));
   t = await tool('read_messages', { contact: 'fred', limit: 1 });
   ok('M3 read_messages: a limit', /the last 1 of 4 messages/.test(t.content[0].text) && !/hello/.test(t.content[0].text));
   t = await tool('read_messages', { contact: 'nobody' });

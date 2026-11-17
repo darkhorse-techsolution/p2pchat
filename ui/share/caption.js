@@ -8,22 +8,25 @@
 // The other way round (Settings: "Send captions of what I say..."): while my microphone goes to a contact in a
 // share, the same recognizer reads my own microphone here, and every finished line is sent to that contact as a
 // chat message of kind 'caption'. Text gets through a connection too weak for the picture, it stays in the thread,
-// and I see each line in my own copy of the chat as it goes out. Only my microphone, never the computer's sound,
-// and nothing while the microphone is muted. There is one recognizer: while it reads my voice, the captions over
-// a share I watch pause.
+// and I see each line in my own copy of the chat as it goes out. Nothing while the microphone is muted. When this
+// computer's sound goes out with the share too (Settings, "Also send this computer's sound"), it is read as a
+// second stream of its own, and its lines are sent marked as the computer's sound, never as my words. Only what
+// actually goes out is read, so nothing of either in an unattended share. There is one recognizer: while it reads
+// this computer, the captions over a share I watch pause.
 //
-// Reads from app.js: S, $, toast. Reads K.viewer, K.mic and K.sessions at call time.
+// Reads from app.js: S, $, toast. Reads K.viewer, K.mic, K.capture and K.sessions at call time.
 (() => {
   const K = window.ShareKit;
   const enabled = () => !!(S.settings && S.settings.captions);
   const outOn = () => !!(S.settings && S.settings.captionsOut);
-  const SELF = '~self';           // the recognizer's name for my own voice; no contact id looks like it
+  const SELF = '~self', SOUND = '~sound';   // the recognizer's names for my voice and for this computer's sound; no contact id looks like them
   // Who hears my microphone right now: a caption of what I say goes to them and to nobody else. A muted
-  // microphone has none; an unattended share sends no microphone, so it has none either.
+  // microphone has none; an unattended share sends no microphone, so it has none either. The computer's sound
+  // rides the same track, so the same contacts hear it, and the same mute stops it.
   const hearers = () => K.sessions.all().filter((x) => !x.closed && x.micTrack && x.micTrack.enabled && x.micTrack.readyState !== 'ended');
   const NOISE = /^[\[(].*[\])]$/;   // what the recognizer writes for a sound that is not speech: "[BLANK_AUDIO]", "(music)"
 
-  let cur = null;                 // { pub, track, out, ctx, src, proc, gain }
+  const taps = new Map();         // stream name -> { pub, track, out, ctx, src, proc, gain }; out: 'voice' | 'sound' | '' (a share I watch)
   let idleTimer = null;
   let lines = [];                 // finalized caption lines (last two shown)
   let interim = '';               // the line still being spoken
@@ -52,32 +55,42 @@
     };
     src.connect(proc); proc.connect(gain); gain.connect(ctx.destination);
     ctx.resume && ctx.resume().catch(() => {});
-    cur = { pub: want.pub, track, out: !!want.out, ctx, src, proc, gain };
+    taps.set(want.pub, { pub: want.pub, track, out: want.out || '', ctx, src, proc, gain });
     window.api.captionOn(want.pub).catch(() => {});
   }
 
-  function stopTap() {
-    if (!cur) return;
-    try { cur.proc.onaudioprocess = null; cur.src.disconnect(); cur.proc.disconnect(); cur.gain.disconnect(); cur.ctx.close(); } catch {}
-    window.api.captionOff().catch(() => {});
-    cur = null;
-    clear();
+  function stopTap(pub) {
+    const t = taps.get(pub);
+    if (!t) return;
+    try { t.proc.onaudioprocess = null; t.src.disconnect(); t.proc.disconnect(); t.gain.disconnect(); t.ctx.close(); } catch {}
+    window.api.captionOff(pub).catch(() => {});
+    taps.delete(pub);
+    if (!t.out) clear();
   }
 
-  // Start, stop or switch the tap: my own microphone while someone hears it and the setting is on, else the
-  // share currently on screen. Called whenever either can change (every paint of the share controls).
+  // Start, stop or switch the taps: what this computer sends while someone hears it and the setting is on (my
+  // microphone, and the computer's sound when it is in the mix that goes out), else the share currently on screen.
+  // Called whenever any of that can change (every paint of the share controls).
   function sync() {
-    const voice = outOn() && K.mic && K.mic.state === 'live' ? K.mic.voice : null;   // the microphone alone: the device's own track may be a mix with the computer's sound
+    const wants = [];
+    if (outOn() && K.mic && K.mic.state === 'live' && hearers().length) {
+      if (K.mic.voice) wants.push({ pub: SELF, track: K.mic.voice, out: 'voice' });   // the microphone alone, never the mix
+      const snd = K.capture && K.capture.sound;
+      if (snd && snd.readyState === 'live' && K.mic.mix && K.mic.mix.has('sound')) wants.push({ pub: SOUND, track: snd, out: 'sound' });
+    }
     const b = K.viewer.bound;
-    const want = voice && hearers().length ? { pub: SELF, track: voice, out: true }
-      : enabled() && b && b.remote && b.remote.audio ? { pub: b.pub, track: b.remote.audio } : null;
-    if (cur && (!want || want.pub !== cur.pub || (cur.out && want.track !== cur.track))) stopTap();
-    if (want && !cur) startTap(want);
-    if (!want) clear();
+    if (!wants.length && enabled() && b && b.remote && b.remote.audio) wants.push({ pub: b.pub, track: b.remote.audio });
+    for (const t of [...taps.values()]) {
+      const w = wants.find((x) => x.pub === t.pub);
+      if (!w || (t.out && w.track !== t.track)) stopTap(t.pub);
+    }
+    for (const w of wants) if (!taps.has(w.pub)) startTap(w);
+    if (!wants.some((w) => !w.out)) clear();
   }
-  function sendOut(text) {
-    if (NOISE.test(text)) return;
-    for (const x of hearers()) window.api.send(x.pub, { kind: 'caption', text }).catch(() => {});
+  // src: 'voice' my microphone, 'sound' what this computer played. The mark travels in the message's lang field.
+  function sendOut(text, src) {
+    if (NOISE.test(text) || !/[\p{L}\p{N}]/u.test(text)) return;   // "(music)", or notes and dots with no word in them
+    for (const x of hearers()) window.api.send(x.pub, { kind: 'caption', text, lang: src === 'sound' ? 'sound' : '' }).catch(() => {});
   }
 
   // --- overlay -------------------------------------------------------------------------------
@@ -94,9 +107,10 @@
   function bumpIdle() { clearTimeout(idleTimer); idleTimer = setTimeout(() => { lines = []; interim = ''; render(); }, 7000); }
 
   function onText(ev) {
-    if (!cur || ev.pub !== cur.pub) return;
+    const tap = taps.get(ev.pub);
+    if (!tap) return;
     const t = (ev.text || '').trim(); if (!t) return;
-    if (cur.out) { if (ev.final) sendOut(t); return; }   // my own voice: finished lines go into the chat, nothing over the video
+    if (tap.out) { if (ev.final) sendOut(t, tap.out); return; }   // this computer's own: finished lines go into the chat, nothing over the video
     if (ev.final) { lines.push(t); if (lines.length > 6) lines = lines.slice(-6); interim = ''; }
     else interim = t;
     render(); bumpIdle();
@@ -109,5 +123,5 @@
     else if (ev.state === 'error') toast(`Captions unavailable: ${ev.message || 'failed to start'}`, 'err');
   }
 
-  K.caption = { sync, onText, onStatus, clear, active: () => !!cur, sending: (sess) => !!(cur && cur.out && hearers().includes(sess)) };
+  K.caption = { sync, onText, onStatus, clear, active: () => taps.size > 0, sending: (sess) => [...taps.values()].some((t) => t.out) && hearers().includes(sess) };
 })();

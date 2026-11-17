@@ -97,7 +97,7 @@ function renderContacts() {
     const row = document.createElement('div'); row.className = 'contact' + (c.pub === S.current ? ' active' : ''); row.dataset.pub = c.pub;
     const av = document.createElement('div'); av.className = 'avatar'; avatar(av, c.pub, c.name, c.status);
     const main = document.createElement('div'); main.className = 'c-main';
-    const prev = c.last ? (c.last.kind === 'code' ? c.last.text.split('\n')[0] : c.last.kind === 'image' ? 'Screenshot' : c.last.kind === 'caption' ? `Caption: ${c.last.text}` : c.last.text) : (c.status === 'online' ? 'Online' : 'No messages yet');
+    const prev = c.last ? (c.last.kind === 'code' ? c.last.text.split('\n')[0] : c.last.kind === 'image' ? 'Screenshot' : c.last.kind === 'caption' ? `${c.last.lang === 'sound' ? 'Caption (sound)' : 'Caption'}: ${c.last.text}` : c.last.text) : (c.status === 'online' ? 'Online' : 'No messages yet');
     main.innerHTML = `<div class="c-name">${esc(c.name)}${c.verified ? ' <span class="verified">✓</span>' : ''}</div><div class="c-prev${c.last?.kind === 'code' ? ' code' : c.last?.kind === 'image' ? ' image' : ''}">${c.last?.from === 'me' ? '<span class="muted">You: </span>' : ''}${esc(prev)}</div>`;
     const side = document.createElement('div'); side.className = 'c-side';
     const live = window.Share ? window.Share.live(c.pub) : '';
@@ -145,7 +145,7 @@ function renderMessages(jump, unread = 0) {
     const day = new Date(m.ts).toDateString();
     if (day !== lastDay) { const d = document.createElement('div'); d.className = 'day'; d.textContent = fmtDay(m.ts); root.appendChild(d); lastDay = day; prev = null; }
     if (i === firstUnread) { const u = document.createElement('div'); u.className = 'unread-div'; u.textContent = `${unread} new`; root.appendChild(u); prev = null; }
-    const cont = prev && prev.from === m.from && m.ts - prev.ts < 120000;
+    const cont = prev && prev.from === m.from && m.ts - prev.ts < 120000 && capOf(prev) === capOf(m);   // a run of captions carries one label, so a run ends where the label would change
     if (!cont && prevEl) prevEl.classList.add('last');
     const el = messageEl(m, cont); root.appendChild(el); prev = m; prevEl = el;
   });
@@ -167,6 +167,7 @@ function renderText(text) {
   if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
   return frag;
 }
+const capOf = (m) => (m.kind === 'caption' ? `caption:${m.lang || ''}` : '');   // which caption label a message carries, '' for none
 const COLLAPSE_LINES = 18;
 S.codeOpen = new Set();   // blocks the user expanded this session
 function messageEl(m, cont) {
@@ -205,7 +206,12 @@ function messageEl(m, cont) {
     s.onclick = async () => { try { await window.api.saveImage(S.current, m.id); } catch (e) { toast(ipcErr(e), 'err'); } };
     tools.append(c, s); el.appendChild(tools);
   } else {
-    if (m.kind === 'caption' && !cont) { const tag = document.createElement('div'); tag.className = 'cap-tag'; tag.textContent = 'Caption'; tag.title = m.from === 'me' ? 'What you said during the share, written by your computer and sent as text' : 'What they said during the share, written by their computer and sent as text'; el.appendChild(tag); }
+    if (m.kind === 'caption' && !cont) {
+      const sound = m.lang === 'sound', tag = document.createElement('div'); tag.className = 'cap-tag'; tag.textContent = sound ? 'Caption · sound' : 'Caption';
+      tag.title = sound ? (m.from === 'me' ? 'What your computer played during the share, written by your computer and sent as text' : 'What their computer played during the share, written by their computer and sent as text')
+        : (m.from === 'me' ? 'What you said during the share, written by your computer and sent as text' : 'What they said during the share, written by their computer and sent as text');
+      el.appendChild(tag);
+    }
     const b = document.createElement('div'); b.className = 'bubble' + (m.kind !== 'caption' && isEmojiOnly(m.text) ? ' emoji' : ''); b.appendChild(renderText(m.text)); el.appendChild(b);
     const tools = document.createElement('div'); tools.className = 'bubble-tools';
     const c = document.createElement('button'); c.textContent = 'Copy'; c.title = 'Copy message text';

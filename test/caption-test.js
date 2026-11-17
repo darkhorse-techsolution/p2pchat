@@ -1,12 +1,13 @@
 // Captions of my own voice, sent into the chat (ui/share/caption.js, the outgoing half): when the tap runs and on
 // which track, who a finished line goes to, what is never sent, and how it shares the one recognizer with the
-// captions over a share I watch. No window, no audio: stand-ins for the audio graph and for window.api.
+// captions over a share I watch. Then the same for this computer's sound, a second stream with its own mark.
+// No window, no audio: stand-ins for the audio graph and for window.api.
 const { load } = require('./share-world.js');
 const ok = (n, v) => { console.log((v ? 'PASS' : 'FAIL').padEnd(5), n); if (!v) process.exitCode = 1; };
 const tick = () => new Promise((r) => setImmediate(r));
 
 function world(settings) {
-  const w = { on: [], off: 0, sent: [], taps: [], S: { settings }, list: [] };
+  const w = { on: [], off: 0, offs: [], sent: [], taps: [], S: { settings }, list: [] };
   const el = { textContent: '', classList: { toggle() {} } };
   class AudioContext {
     constructor() { this.sampleRate = 48000; this.destination = {}; this.closed = false; }
@@ -17,12 +18,15 @@ function world(settings) {
     close() { this.closed = true; }
   }
   w.K = load(['kit.js', 'caption.js'], { S: w.S, $: () => el, toast() {}, AudioContext, MediaStream: class { constructor(t) { this.tracks = t; } },
-    api: { captionOn: async (pub) => { w.on.push(pub); return true; }, captionOff: async () => { w.off++; return true; }, captionPcm() {},
+    api: { captionOn: async (pub) => { w.on.push(pub); return true; }, captionOff: async (pub) => { w.off++; w.offs.push(pub); return true; }, captionPcm() {},
       send: async (pub, m) => { w.sent.push({ pub, ...m }); return m; } } });
   w.K.sessions = { all: () => w.list };
   w.K.viewer = { bound: null };
-  w.K.mic = { state: 'idle', src: null, voice: null };
+  w.K.mic = { state: 'idle', src: null, voice: null, mix: null };
+  w.K.capture = { sound: null };
   w.track = (id) => ({ id, enabled: true, readyState: 'live' });
+  // this computer's sound, captured with the screen and (unless inMix is false) part of the mix that goes out
+  w.soundUp = (inMix = true) => { const t = w.track('sound'); w.K.capture.sound = t; w.K.mic.state = 'live'; w.K.mic.mix = { has: (which) => which === 'sound' && inMix }; return t; };
   w.micUp = (id = 'mic') => { w.K.mic.state = 'live'; w.K.mic.voice = w.track(id); w.K.mic.src = { id: 'mix-of-' + id }; return w.K.mic.voice; };   // src stands for a mix with the computer's sound: never to be read
   w.hears = (pub) => { const x = { pub, closed: false, micTrack: w.track('lease-' + pub), remote: { audio: null } }; w.list.push(x); return x; };
   w.liveTap = () => w.taps.filter((t) => !t.ctx.closed);
@@ -97,4 +101,47 @@ function world(settings) {
   ok('O4 I mute: it goes back to their voice', w.liveTap().length === 1 && w.liveTap()[0].track === theirs);
   w.S.settings.captions = false; w.K.caption.sync();
   ok('O4 with only the outgoing setting on and nothing of mine to read: no tap', w.liveTap().length === 0);
+
+  // O5: this computer's sound, a second stream beside my voice
+  w = world({ captionsOut: true });
+  const v5 = w.micUp(); const bob5 = w.hears('bob');
+  w.soundUp(false); w.K.caption.sync();
+  ok('O5 the sound was captured but is not in what goes out: it is not read', w.liveTap().length === 1 && w.on.join() === '~self');
+  const snd = w.soundUp(); w.K.caption.sync();
+  ok('O5 the sound goes out in the mix: a second tap, on the sound itself, under its own name', w.liveTap().length === 2 && w.liveTap()[0].track === v5 && w.liveTap()[1].track === snd && w.on.join() === '~self,~sound');
+  w.K.caption.sync(); w.K.caption.sync();
+  ok('O5 asked again and again: still the two', w.taps.length === 2 && w.off === 0);
+  w.say('Welcome to the demo.', true, '~sound'); w.say('That was the clip.', true, '~self');
+  await tick();
+  ok('O5 a line of the computer\'s sound goes out marked as sound', w.sent.length === 2 && w.sent[0].pub === 'bob' && w.sent[0].kind === 'caption' && w.sent[0].lang === 'sound' && w.sent[0].text === 'Welcome to the demo.');
+  ok('O5 a line of my voice goes out unmarked, as before', w.sent[1].kind === 'caption' && w.sent[1].lang === '' && w.sent[1].text === 'That was the clip.');
+  w.say('♪♪', true, '~sound'); w.say('(upbeat music)', true, '~sound'); w.say('...', true, '~sound');
+  ok('O5 music and noise make no line', w.sent.length === 2);
+  w.say('half a li', false, '~sound');
+  ok('O5 a line of the sound that is still running is not sent', w.sent.length === 2);
+  snd.readyState = 'ended'; w.K.caption.sync();
+  ok('O5 the sound capture ended, the talk goes on: only the sound tap stops', w.liveTap().length === 1 && w.liveTap()[0].track === v5 && w.offs.join() === '~sound');
+  w.say('A late line of the clip.', true, '~sound');
+  ok('O5 and a late line of it is dropped', w.sent.length === 2);
+  w.soundUp(); w.K.caption.sync();
+  bob5.micTrack.enabled = false; w.K.caption.sync();
+  ok('O5 the microphone button mutes all I send: both taps stop', w.liveTap().length === 0 && w.K.caption.sending(bob5) === false);
+  bob5.micTrack.enabled = true; w.K.caption.sync();
+  ok('O5 unmuted: both again', w.liveTap().length === 2 && w.K.caption.sending(bob5) === true);
+  w.S.settings.captionsOut = false; w.K.caption.sync();
+  ok('O5 the setting goes off: neither is read', w.liveTap().length === 0);
+
+  w = world({ captionsOut: true });
+  const only = w.soundUp(); const bob6 = w.hears('bob'); w.K.caption.sync();   // no microphone here: mic.voice stays null
+  ok('O5 no microphone, the sound alone goes out: the sound is read and nothing else', w.liveTap().length === 1 && w.liveTap()[0].track === only && w.on.join() === '~sound' && w.K.caption.sending(bob6) === true);
+
+  w = world({ captionsOut: true });
+  w.soundUp(); w.list.push({ pub: 'box', closed: false, micTrack: null, screenTrack: {}, remote: {} }); w.K.caption.sync();
+  ok('O5 a share that sends no audio (an unattended one): nothing is read, whatever the capture holds', w.liveTap().length === 0 && w.on.length === 0);
+
+  w = world({ captionsOut: true, captions: true });
+  w.K.viewer.bound = { pub: 'dave', remote: { audio: w.track('their-voice') } };
+  w.K.caption.sync();
+  w.micUp(); w.soundUp(); w.hears('dave'); w.K.caption.sync();
+  ok('O5 watching them, then my voice and sound go to them: the recognizer leaves their voice for my two', w.liveTap().length === 2 && w.on.join() === 'dave,~self,~sound' && w.offs.join() === 'dave');
 })().catch((e) => { console.log('FAIL  caption test threw:', e.stack); process.exitCode = 1; });

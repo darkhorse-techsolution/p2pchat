@@ -1,5 +1,6 @@
 // A local door for an assistant on this computer (Claude Code, through mcp/p2pchat-mcp.js): list the contacts, read
-// a chat, send a message as the user, wait for the next one. Text only: no shared screens, no files, no settings.
+// a chat, send a message as the user, wait for the next one. Text only: no shared screens, no files, no settings,
+// and no captions of what a computer played.
 // Off unless the user turns it on in Settings. Reachable only from this computer: a Unix socket (mode 0600) on macOS
 // and Linux, a named pipe on Windows. A connection must first present the token from bridge.json, a file only this
 // user can read; the token is new at every start, so an old copy of it opens nothing.
@@ -40,10 +41,16 @@ function resolve(contacts, query) {
   return hit;
 }
 
+// A caption of what a computer played during a share (kind 'caption', lang 'sound') is for the people in the chat.
+// The assistant is not given it, from either side: it reads the captions of what the user or the contact said
+// into a microphone, and not a running text of whatever else sounded on a computer, other people's voices included.
+const SOUND_CAPTION = '[caption of computer sound]';
+const hidden = (m) => !!m && m.kind === 'caption' && m.lang === 'sound';
+
 // What the assistant sees of a message: who wrote it, when, and its text. An image is a line, never its bytes.
 function msgOut(m) {
   const o = { id: m.id, from: m.from === 'me' ? 'me' : 'them', ts: m.ts, kind: m.kind, status: m.status };
-  o.text = m.kind === 'image' ? `[image ${m.w || '?'}x${m.h || '?'}]` : String(m.text || '');
+  o.text = m.kind === 'image' ? `[image ${m.w || '?'}x${m.h || '?'}]` : hidden(m) ? SOUND_CAPTION : String(m.text || '');
   if (m.kind === 'code' && m.lang) o.lang = m.lang;
   return o;
 }
@@ -51,7 +58,7 @@ function msgOut(m) {
 function contactOut(c) {
   const l = c.last;
   return { id: c.pub, name: c.name, status: c.status, unread: c.unread || 0,
-    last: l ? { from: l.from === 'me' ? 'me' : 'them', ts: l.ts, kind: l.kind, text: l.kind === 'image' ? '[image]' : String(l.text || '') } : null };
+    last: l ? { from: l.from === 'me' ? 'me' : 'them', ts: l.ts, kind: l.kind, text: l.kind === 'image' ? '[image]' : hidden(l) ? SOUND_CAPTION : String(l.text || '') } : null };
 }
 
 // api: contacts() -> the contact views the chat window gets; conversation(pub) -> that chat's message records;
@@ -73,7 +80,7 @@ function createBridge({ dir, platform = process.platform, log, version = '', api
     messages: ({ contact, limit } = {}) => {
       const c = resolve(api.contacts(), contact);
       const n = Math.min(MAX_READ, Math.max(1, Number.isInteger(limit) ? limit : 30));
-      const all = api.conversation(c.pub);
+      const all = api.conversation(c.pub).filter((m) => !hidden(m));
       return { contact: named(c), total: all.length, messages: all.slice(-n).map(msgOut) };
     },
     send: ({ contact, text, code, language } = {}) => {
@@ -178,7 +185,7 @@ function createBridge({ dir, platform = process.platform, log, version = '', api
 
   // Every message the engine stores (both ways) passes here; only a new one from a contact wakes a waiter.
   function onMessage(pub, msg) {
-    if (!msg || msg.from !== 'peer' || !waiters.size) return;
+    if (!msg || msg.from !== 'peer' || hidden(msg) || !waiters.size) return;
     const c = api.contacts().find((x) => x.pub === pub);
     for (const w of [...waiters]) if (!w.pub || w.pub === pub) w.done({ contact: c ? named(c) : { id: pub, name: 'a contact', status: 'online' }, message: msgOut(msg) });
   }

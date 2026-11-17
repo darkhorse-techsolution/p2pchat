@@ -14,6 +14,8 @@
 // A message: { id, seq, from: 'me'|'peer', ts, kind: 'text'|'code'|'image'|'caption', text, lang, status }
 //   seq is the sender's own counter for that conversation. Both sides store both
 //   directions, so either side can rebuild the whole conversation for the other.
+//   kind 'caption' is a line a computer wrote from sound during a share; its lang says which sound:
+//   '' what the sender said into the microphone, 'sound' what the sender's computer played.
 //   kind 'image' adds { mime, w, h, bytes } and has text ''. The bytes themselves are
 //   not in the vault: they sit as one sealed file per message in <vault>-blobs/<contact>/<id>,
 //   because the vault is rewritten whole on every change and screenshots are megabytes.
@@ -54,6 +56,7 @@ function sanitizeMsg(m, now = Date.now()) {
   let ts = Number(m.ts);
   if (!Number.isFinite(ts) || ts < 0 || ts > now + 86400000) ts = now;
   const out = { id, seq: m.seq, ts: Math.floor(ts), kind: m.kind === 'code' ? 'code' : m.kind === 'caption' ? 'caption' : 'text', text: m.text, lang: typeof m.lang === 'string' ? m.lang.slice(0, 24) : '' };   // 'caption': a line of what the sender said during a share; an app from before 0.13.0 reads it as text
+  if (out.kind === 'caption' && out.lang !== 'sound') out.lang = '';
   if (m.kind === 'image') {
     const img = sanitizeImage(m);
     if (!img) return null;

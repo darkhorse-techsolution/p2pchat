@@ -30,7 +30,8 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/ja
 function createCaptioner({ app, protocol, BrowserWindow, ipcMain, log, push }) {
   const APP_DIR = path.join(__dirname, '..', 'ui', 'caption');
   const USER_DIR = path.join(app.getPath('userData'), 'caption');
-  let win = null, ready = false, enabling = false, activePub = null;
+  let win = null, ready = false, enabling = false;
+  const active = new Set(), MAX_STREAMS = 2;
 
   const within = (base, p) => { const r = path.resolve(p), b = path.resolve(base); return r === b || r.startsWith(b + path.sep); };
 
@@ -88,19 +89,27 @@ function createCaptioner({ app, protocol, BrowserWindow, ipcMain, log, push }) {
       catch (e) { log.error('caption enable', e); push('caption-status', { state: 'error', message: String((e && e.message) || e).slice(0, 200) }); }
       finally { enabling = false; }
     } else {
-      activePub = null; ready = false;
+      active.clear(); ready = false;
       if (win && !win.isDestroyed()) win.destroy();
       win = null;
       push('caption-status', { state: 'off' });
     }
   }
 
-  function start(pub) { activePub = pub || null; if (win && ready && !win.isDestroyed() && activePub) win.webContents.send('cap-control', { op: 'start', pub: activePub }); }
-  function stop() { if (win && ready && !win.isDestroyed()) win.webContents.send('cap-control', { op: 'stop' }); activePub = null; }
-  function feed(pub, buf) { if (win && ready && !win.isDestroyed() && pub === activePub) win.webContents.send('cap-pcm', pub, buf); }
+  // Streams being read. Two at most: my microphone and this computer's sound while both go out in a share.
+  function start(pub) {
+    if (!pub || (!active.has(pub) && active.size >= MAX_STREAMS)) return;
+    active.add(pub);
+    if (win && ready && !win.isDestroyed()) win.webContents.send('cap-control', { op: 'start', pub });
+  }
+  function stop(pub) {   // one stream, or all of them when no name is given
+    if (win && ready && !win.isDestroyed()) win.webContents.send('cap-control', pub ? { op: 'stop', pub } : { op: 'stop' });
+    if (pub) active.delete(pub); else active.clear();
+  }
+  function feed(pub, buf) { if (win && ready && !win.isDestroyed() && active.has(pub)) win.webContents.send('cap-pcm', pub, buf); }
 
   const fromCap = (e) => win && !win.isDestroyed() && e.sender === win.webContents;
-  ipcMain.on('cap-ready', (e) => { if (!fromCap(e)) return; ready = true; push('caption-status', { state: 'ready' }); if (activePub) win.webContents.send('cap-control', { op: 'start', pub: activePub }); });
+  ipcMain.on('cap-ready', (e) => { if (!fromCap(e)) return; ready = true; push('caption-status', { state: 'ready' }); for (const pub of active) win.webContents.send('cap-control', { op: 'start', pub }); });
   ipcMain.on('cap-text', (e, pub, text, final) => { if (!fromCap(e)) return; push('caption', { pub, text: String(text || '').slice(0, 400), final: !!final }); });
   ipcMain.on('cap-stat', (e, m) => { if (!fromCap(e)) return; log.info('captioner', m); });
   ipcMain.on('cap-fail', (e, m) => { if (!fromCap(e)) return; log.error('captioner', m); push('caption-status', { state: 'error', message: String(m).slice(0, 200) }); });

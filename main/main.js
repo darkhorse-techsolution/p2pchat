@@ -373,7 +373,7 @@ function contactView(c) {
   const conv = store.conv(c.pub);
   const last = conv.messages[conv.messages.length - 1] || null;
   return { pub: c.pub, name: c.name, host: c.host, port: c.port, verified: !!c.verified, status: engine.status(c.pub),
-    unread: conv.unread, last: last ? { ts: last.ts, kind: last.kind, text: String(last.text || '').slice(0, 80), from: last.from } : null };
+    unread: conv.unread, last: last ? { ts: last.ts, kind: last.kind, text: String(last.text || '').slice(0, 80), from: last.from, lang: last.lang || '' } : null };
 }
 // What the renderer sees of a message: an image record also says whether its bytes are
 // here (blob) and, if not, why not yet (fetch: pending | offline | quota | unavailable).
@@ -601,7 +601,7 @@ handle('runHotkey', (_e, kind) => (Object.hasOwn(SHORTCUTS, kind) ? fire(kind) :
 // Live captions: the page says which watched contact's voice to caption and streams its 16 kHz PCM here;
 // main forwards it to the hidden captioner window. Only ever the voice already playing in the viewer.
 handle('captionOn', (_e, pub) => { captioner.start(String(pub || '')); return captioner.isReady(); });
-handle('captionOff', () => { captioner.stop(); return true; });
+handle('captionOff', (_e, pub) => { captioner.stop(typeof pub === 'string' ? pub : ''); return true; });
 ipcMain.on('caption-pcm', (e, pub, buf) => { if (!win || win.isDestroyed() || e.senderFrame !== win.webContents.mainFrame) return; captioner.feed(String(pub || ''), buf); });
 // --- remote control of the shared display ------------------------------------------
 // The sharer allowed the viewer to drive this machine: a helper process posts the viewer's

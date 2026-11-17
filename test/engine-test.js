@@ -287,6 +287,10 @@ async function boot(who, opts = {}) {
   ok('C1 a typed message after it still is', await waitFor(() => bob.store.conv(A).unread === unread0 + 1, 3000, 'typed after caption'));
   ok('C1 alice sees the caption delivered', await waitFor(() => alice.store.conv(B).messages.find((m) => m.id === cap.id)?.status === 'delivered', 3000, 'caption ack'));
   ok('C1 the wire check keeps caption, and still reads a kind it does not know as text (what an older app does with a caption)', sanitizeMsg({ seq: 1, text: 'x', kind: 'caption' }).kind === 'caption' && sanitizeMsg({ seq: 1, text: 'x', kind: 'whatever' }).kind === 'text');
+  const capS = alice.sendMessage(B, { kind: 'caption', text: 'Welcome to the demo.', lang: 'sound' });
+  ok('C1 a caption of what the computer played keeps that mark, here and on the other side', capS.lang === 'sound' && await waitFor(() => bob.store.conv(A).messages.some((m) => m.id === capS.id && m.kind === 'caption' && m.lang === 'sound'), 3000, 'sound caption'));
+  ok('C1 it is not counted as unread either', bob.store.conv(A).unread === unread0 + 1);
+  ok('C1 the wire check lets a caption carry that mark and no other; code keeps its language', sanitizeMsg({ seq: 1, text: 'x', kind: 'caption', lang: 'sound' }).lang === 'sound' && sanitizeMsg({ seq: 1, text: 'x', kind: 'caption', lang: 'js' }).lang === '' && sanitizeMsg({ seq: 1, text: 'x', kind: 'code', lang: 'js' }).lang === 'js');
 
   // 7. vault is encrypted on disk
   const raw = fs.readFileSync(`${DIR}/alice.vault`);
