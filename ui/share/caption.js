@@ -15,6 +15,12 @@
 // gives it a real microphone the same as any share. There is one recognizer: while it reads
 // this computer, the captions over a share I watch pause.
 //
+// Each line is streamed ahead of itself too: while it is still forming, sendLive sends it as an ephemeral
+// 'capline' (never stored), so the other side sees the words build before the finished line lands in the chat.
+// The receiving half here (onLive/onFinal) shows a contact's streamed captions as the live line under the open
+// chat and as the subtitle over their screen, and clears each on the finished 'caption' message; while a contact
+// streams, my own recognizer leaves their share alone (sync, receiving()).
+//
 // Reads from app.js: S, $, toast. Reads K.viewer, K.mic, K.capture and K.sessions at call time.
 (() => {
   const K = window.ShareKit;
@@ -29,8 +35,16 @@
 
   const taps = new Map();         // stream name -> { pub, track, out, ctx, src, proc, gain }; out: 'voice' | 'sound' | '' (a share I watch)
   let idleTimer = null;
-  let lines = [];                 // finalized caption lines (last two shown)
-  let interim = '';               // the line still being spoken
+  let lines = [];                 // finalized caption lines (last two shown), from a share I watch and caption here
+  let interim = '';               // the line still being spoken, same source
+  let capSeq = 0;                 // orders the live lines I stream out, so a late one cannot overwrite a newer
+
+  // Captions a contact streams to me: the live (still-forming) line and the last finished line, per source, per
+  // contact. The finished lines also arrive as ordinary 'caption' messages (onFinal) - that is what the thread
+  // shows and what clears the live line. Live only: nothing here is stored. { live: {'' , sound}, fin: {...}, ts }
+  const recv = new Map();
+  const RECV_HOLD = 10000;        // after this much quiet a contact counts as no longer streaming, and my recognizer may take the watched share back
+  let recvTimer = null;
 
   function downsample(buf, inRate, outRate) {
     if (outRate >= inRate) return Float32Array.from(buf);
@@ -80,7 +94,7 @@
       if (snd && snd.readyState === 'live' && K.mic.mix && K.mic.mix.has('sound')) wants.push({ pub: SOUND, track: snd, out: 'sound' });
     }
     const b = K.viewer.bound;
-    if (!wants.length && enabled() && b && b.remote && b.remote.audio) wants.push({ pub: b.pub, track: b.remote.audio });
+    if (!wants.length && enabled() && b && b.remote && b.remote.audio && !receiving(b.pub)) wants.push({ pub: b.pub, track: b.remote.audio });
     for (const t of [...taps.values()]) {
       const w = wants.find((x) => x.pub === t.pub);
       if (!w || (t.out && w.track !== t.track)) stopTap(t.pub);
@@ -93,16 +107,64 @@
     if (NOISE.test(text) || !/[\p{L}\p{N}]/u.test(text)) return;   // "(music)", or notes and dots with no word in them
     for (const x of hearers()) window.api.send(x.pub, { kind: 'caption', text, lang: src === 'sound' ? 'sound' : '' }).catch(() => {});
   }
+  // The live line while a sentence is still forming: streamed to the same hearers, ahead of the finished line that
+  // sendOut then sends. Ephemeral (window.api.capLive, never stored); the finished line is the record. seq lets the
+  // other side drop a frame that arrives out of order.
+  function sendLive(text, src) {
+    if (NOISE.test(text) || !/[\p{L}\p{N}]/u.test(text)) return;
+    const seq = ++capSeq, lang = src === 'sound' ? 'sound' : '';
+    for (const x of hearers()) window.api.capLive(x.pub, { text, lang, seq }).catch(() => {});
+  }
+
+  // --- captions a contact streams to me -----------------------------------------------------
+  const entry = (pub) => { let e = recv.get(pub); if (!e) { e = { live: { '': null, sound: null }, fin: { '': '', sound: '' }, ts: 0 }; recv.set(pub, e); } return e; };
+  const receiving = (pub) => { const e = recv.get(pub); return !!e && Date.now() - e.ts < RECV_HOLD; };
+  function recvArm() { clearTimeout(recvTimer); recvTimer = setTimeout(() => { let any = false; for (const [, e] of recv) { if (Date.now() - e.ts >= 7000) { e.live[''] = null; e.live.sound = null; } else any = true; } render(); if (any) recvArm(); }, 7000); }
+  // ev: { pub, text, lang, seq } - the still-forming line. Keep it if it is newer than the one shown, or if a gap
+  // (over 2 s since the last frame) means a new line, or their app restarted and seq began again.
+  function onLive(ev) {
+    if (!ev || !ev.pub) return;
+    const lang = ev.lang === 'sound' ? 'sound' : '', e = entry(ev.pub), cur = e.live[lang], now = Date.now();
+    if (cur && (ev.seq | 0) <= cur.seq && now - e.ts <= 2000) return;
+    e.live[lang] = { text: String(ev.text || ''), seq: ev.seq | 0 }; e.ts = now;
+    recvArm(); render();
+  }
+  // A finished 'caption' message from a contact arrived (app.js): the sentence is done, so its live line is cleared
+  // (the thread now holds it) and kept as the last finished line for the subtitle over their screen.
+  function onFinal(pub, msg) {
+    if (!pub || !msg) return;
+    const lang = msg.lang === 'sound' ? 'sound' : '', e = entry(pub);
+    e.live[lang] = null; e.fin[lang] = String(msg.text || ''); e.ts = Date.now();
+    render();
+  }
+  // The subtitle over a contact's screen: whatever is forming now (voice and sound), else their last finished line.
+  function recvText(pub) {
+    const e = recv.get(pub); if (!e) return '';
+    const live = [e.live[''], e.live.sound].filter(Boolean).map((x) => x.text);
+    const out = live.length ? live : [e.fin[''] || e.fin.sound].filter(Boolean);
+    return out.join('\n').trim();
+  }
 
   // --- overlay -------------------------------------------------------------------------------
   const box = () => K.el('viewerCaptions');   // kept by K.el: the viewer can be in a window of its own
   function render() {
-    const el = box(); if (!el) return;
-    const shown = lines.slice(-2);
-    if (interim) shown.push(interim);
-    const text = shown.join('\n').trim();
-    el.textContent = text;
-    el.classList.toggle('hidden', !text);
+    // The subtitle over the share on screen: a contact's own streamed captions while they are sending them,
+    // otherwise what my recognizer makes of the share I watch. One or the other, never both at once.
+    const el = box();
+    if (el) {
+      const b = K.viewer.bound, fromThem = b && receiving(b.pub) ? recvText(b.pub) : '';
+      let text = fromThem;
+      if (!text) { const shown = lines.slice(-2); if (interim) shown.push(interim); text = shown.join('\n').trim(); }
+      el.textContent = text; el.classList.toggle('hidden', !text);
+    }
+    // The live line under the open chat: the still-forming caption a contact is streaming me, if any. The finished
+    // lines are ordinary messages in the thread; this is only the one not yet finished.
+    const cl = $('capLive');
+    if (cl) {
+      const e = S.current ? recv.get(S.current) : null;
+      const txt = e ? [e.live[''], e.live.sound].filter(Boolean).map((x) => x.text).join('\n') : '';
+      cl.textContent = txt; cl.classList.toggle('hidden', !txt);
+    }
   }
   function clear() { lines = []; interim = ''; clearTimeout(idleTimer); render(); }
   function bumpIdle() { clearTimeout(idleTimer); idleTimer = setTimeout(() => { lines = []; interim = ''; render(); }, 7000); }
@@ -111,7 +173,7 @@
     const tap = taps.get(ev.pub);
     if (!tap) return;
     const t = (ev.text || '').trim(); if (!t) return;
-    if (tap.out) { if (ev.final) sendOut(t, tap.out); return; }   // this computer's own: finished lines go into the chat, nothing over the video
+    if (tap.out) { if (ev.final) sendOut(t, tap.out); else sendLive(t, tap.out); return; }   // my own: finished lines into the chat, the live line streamed ahead of each
     if (ev.final) { lines.push(t); if (lines.length > 6) lines = lines.slice(-6); interim = ''; }
     else interim = t;
     render(); bumpIdle();
@@ -124,5 +186,5 @@
     else if (ev.state === 'error') toast(`Captions unavailable: ${ev.message || 'failed to start'}`, 'err');
   }
 
-  K.caption = { sync, onText, onStatus, clear, active: () => taps.size > 0, sending: (sess) => [...taps.values()].some((t) => t.out) && hearers().includes(sess) };
+  K.caption = { sync, onText, onStatus, clear, onLive, onFinal, repaint: render, receiving, active: () => taps.size > 0, sending: (sess) => [...taps.values()].some((t) => t.out) && hearers().includes(sess) };
 })();

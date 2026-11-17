@@ -292,6 +292,17 @@ async function boot(who, opts = {}) {
   ok('C1 it is not counted as unread either', bob.store.conv(A).unread === unread0 + 1);
   ok('C1 the wire check lets a caption carry that mark and no other; code keeps its language', sanitizeMsg({ seq: 1, text: 'x', kind: 'caption', lang: 'sound' }).lang === 'sound' && sanitizeMsg({ seq: 1, text: 'x', kind: 'caption', lang: 'js' }).lang === '' && sanitizeMsg({ seq: 1, text: 'x', kind: 'code', lang: 'js' }).lang === 'js');
 
+  // C2: the live caption line - the still-forming text, streamed ahead of the finished caption, never stored
+  const { sanitizeCapLine } = require('../core/engine.js');
+  const gotLive = []; bob.on('capline', (f) => gotLive.push(f));
+  const bStored = bob.store.conv(A).messages.length, aStored = alice.store.conv(B).messages.length;
+  alice.sendCapLive(B, { text: 'So the first sli', lang: '', seq: 7 });
+  alice.sendCapLive(B, { text: 'Welcome to the de', lang: 'sound', seq: 8 });
+  ok('C2 a live caption line reaches the other side with its text, mark and order', await waitFor(() => gotLive.length === 2, 3000, 'capline') && gotLive[0].text === 'So the first sli' && gotLive[0].lang === '' && gotLive[0].seq === 7 && gotLive[0].pub === A && gotLive[1].lang === 'sound' && gotLive[1].seq === 8);
+  await sleep(150);
+  ok('C2 a live caption line is never stored, on either side', bob.store.conv(A).messages.length === bStored && alice.store.conv(B).messages.length === aStored);
+  ok('C2 the wire check: text required, lang only sound-or-blank, seq bounded', sanitizeCapLine({ text: '', seq: 1 }) === null && sanitizeCapLine({ text: 'x', lang: 'js', seq: -1 }).lang === '' && sanitizeCapLine({ text: 'x', lang: 'js', seq: -1 }).seq === 0 && sanitizeCapLine({ text: 'x', lang: 'sound', seq: 5 }).seq === 5 && sanitizeCapLine({ text: 'x', seq: 9e9 }).seq === 0);
+
   // 7. vault is encrypted on disk
   const raw = fs.readFileSync(`${DIR}/alice.vault`);
   ok('vault bytes contain no plaintext', !raw.includes('hello bob') && !raw.includes('console.log') && raw.subarray(0,5).toString() === 'P2PV2');

@@ -70,6 +70,17 @@ function sanitizeUa(m) {
   return out;
 }
 
+// A live caption line: the still-being-spoken text of my own voice or this computer's sound, streamed ahead of
+// the finished line that follows as a stored 'caption' message. Live only, never stored. lang marks the source
+// ('' my voice, 'sound' this computer); seq orders the updates so a late frame cannot overwrite a newer one.
+function sanitizeCapLine(m) {
+  if (!m || typeof m !== 'object') return null;
+  const text = typeof m.text === 'string' ? m.text.slice(0, 400) : '';
+  if (!text) return null;
+  const seq = Number.isInteger(m.seq) && m.seq >= 0 && m.seq <= 2e9 ? m.seq : 0;
+  return { text, lang: m.lang === 'sound' ? 'sound' : '', seq };
+}
+
 // A share frame is forwarded to the UI as is, after this shape check: the WebRTC
 // stack in the renderer parses the SDP and candidates, we only bound them.
 const SHARE_OPS = new Set(['sdp', 'ice', 'state', 'bye']);
@@ -283,6 +294,11 @@ class Engine extends EventEmitter {
   }
 
   sendTyping(pub) { const p = this.peers.get(pubId(pub)); if (p) this.#send(p, { k: 'typing' }); }
+
+  // A live caption line, streamed to a contact who hears my microphone or this computer's sound while I caption it:
+  // the still-forming text, ahead of the finished line that follows as an ordinary 'caption' message. Live only,
+  // like typing: if they are offline it is simply not sent, and the finished line still reaches them in the chat.
+  sendCapLive(pub, payload) { const p = this.peers.get(pubId(pub)); if (!p) return; const f = sanitizeCapLine(payload); if (f) this.#send(p, { k: 'capline', ...f }); }
 
   // Screen-share / call signaling: live only, so it needs the peer connected right now.
   sendShare(pub, payload) {
@@ -614,8 +630,9 @@ class Engine extends EventEmitter {
       case 'typing': this.emit('typing', { pub: id }); break;
       case 'share': { const f = sanitizeShare(m); if (f) this.emit('share', { pub: id, ...f }); break; }
       case 'ua': { const f = sanitizeUa(m); if (f) this.emit('ua', { pub: id, ...f }); break; }
+      case 'capline': { const f = sanitizeCapLine(m); if (f) this.emit('capline', { pub: id, ...f }); break; }
     }
   }
 }
 
-module.exports = { Engine, sanitizeShare, sanitizeUa };
+module.exports = { Engine, sanitizeShare, sanitizeUa, sanitizeCapLine };

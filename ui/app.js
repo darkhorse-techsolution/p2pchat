@@ -121,6 +121,7 @@ async function select(pub) {
   S.msgs.set(pub, msgs);
   renderMessages(true, unread);
   renderContacts();
+  if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.repaint();   // the live caption line follows the open chat
   if (!app.classList.contains('narrow') || !S.list) $('input').focus();
 }
 function renderHead() {
@@ -484,6 +485,7 @@ window.api.onEvent(async (ev) => {
       if (!S.current && S.contacts.length) select(ev.pub && contact(ev.pub) ? ev.pub : S.contacts[0].pub);
       break;
     case 'message': {
+      if (ev.msg && ev.msg.kind === 'caption' && ev.msg.from === 'peer' && window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onFinal(ev.pub, ev.msg);
       if (ev.pub === S.current) {
         const list = S.msgs.get(S.current) || []; if (!list.some((m) => m.id === ev.msg.id)) { list.push(ev.msg); S.msgs.set(S.current, list); const b = atBottom(); renderMessages(false); if (!b && ev.msg.from === 'peer') $('jump').classList.remove('hidden'); }
         // only a window the user is actually looking at clears unread; hidden or unfocused, it keeps counting
@@ -512,6 +514,7 @@ window.api.onEvent(async (ev) => {
     case 'settings': S.settings = { ...S.settings, ...ev }; if (openModal === 'mSettings') renderSettings(); if (window.Share) window.Share.onSettings(); break;
     case 'assistant': renderAssistant(ev); break;
     case 'caption': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onText(ev); break;
+    case 'capline': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onLive(ev); break;
     case 'caption-status': if (window.ShareKit && window.ShareKit.caption) window.ShareKit.caption.onStatus(ev); if (ev.state === 'ready' || ev.state === 'off') { if (S.caption) S.caption.present = true; if (openModal === 'mSettings') renderCaptionNote(); } break;
     case 'fullscreen': if (window.Share) window.Share.onFullscreen(ev); break;
     case 'control': if (window.Share) window.Share.onControl(ev); break;

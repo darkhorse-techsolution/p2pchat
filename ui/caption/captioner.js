@@ -23,9 +23,9 @@ let asr = null;
 // "~sound" what the computer plays). They share the one recognizer, a line at a time.
 const streams = new Map();   // name -> { seg, segLen, lastVoice, open, lastInterim, preroll, prerollLen }
 const fresh = () => ({ seg: [], segLen: 0, lastVoice: 0, open: false, lastInterim: 0, preroll: [], prerollLen: 0 });
-// This computer's own audio is only ever used a finished line at a time (it goes into the chat), so no live line
-// is worked out for it: with two such streams the recognizer has no time to spare.
-const finalsOnly = (pub) => pub[0] === '~';
+// Every stream gets a live line, this computer's own audio ("~self"/"~sound") included: the finished line goes
+// into the chat, the live one is streamed ahead of it so the other side sees the words form. want() only queues
+// a live line when the recognizer is idle, so the finished lines (always queued) keep priority and never starve.
 let busy = false;
 const jobs = [];
 
@@ -72,7 +72,7 @@ function feed(pub, ab) {
     st.seg = []; st.segLen = 0; st.open = false; st.lastInterim = 0;
     return;
   }
-  if (!finalsOnly(pub) && segMs >= MIN_SEG_MS && now - st.lastInterim >= INTERIM_MS) { st.lastInterim = now; want(flatten(st.seg, st.segLen), pub, false); }
+  if (segMs >= MIN_SEG_MS && now - st.lastInterim >= INTERIM_MS) { st.lastInterim = now; want(flatten(st.seg, st.segLen), pub, false); }
 }
 
 async function boot() {

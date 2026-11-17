@@ -127,6 +127,7 @@ body.win .side-top { padding-left: 14px; }
 .tk-c { color: var(--tk-c); font-style: italic; } .tk-s { color: var(--tk-s); } .tk-n { color: var(--tk-n); } .tk-k { color: var(--tk-k); }
 .tk-f { color: var(--tk-f); } .tk-t { color: var(--tk-t); } .tk-l { color: var(--tk-l); } .tk-p { color: var(--tk-p); } .tk-o { color: var(--tk-o); }
 .jump { position: absolute; left: 50%; transform: translateX(-50%); bottom: 92px; border-radius: 999px; background: var(--accent); color: var(--on-accent); border-color: var(--accent); box-shadow: var(--shadow); font-weight: 600; font-size: 12.5px; }
+.caplive { padding: 2px 24px 6px; color: var(--dim); font-size: 13px; font-style: italic; line-height: 1.4; white-space: pre-line; }
 .typing { display: flex; gap: 4px; padding: 0 24px 6px; height: 18px; }
 .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); animation: blink 1.2s infinite; }
 .typing span:nth-child(2) { animation-delay: .2s; } .typing span:nth-child(3) { animation-delay: .4s; }

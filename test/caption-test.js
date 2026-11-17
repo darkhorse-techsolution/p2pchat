@@ -7,8 +7,10 @@ const ok = (n, v) => { console.log((v ? 'PASS' : 'FAIL').padEnd(5), n); if (!v) 
 const tick = () => new Promise((r) => setImmediate(r));
 
 function world(settings) {
-  const w = { on: [], off: 0, offs: [], sent: [], taps: [], S: { settings }, list: [] };
-  const el = { textContent: '', classList: { toggle() {} } };
+  const w = { on: [], off: 0, offs: [], sent: [], live: [], taps: [], S: { settings }, list: [], els: new Map() };
+  const mkEl = () => { const e = { textContent: '', hidden: false }; e.classList = { toggle(_c, on) { e.hidden = !!on; } }; return e; };
+  const $ = (id) => { let e = w.els.get(id); if (!e) { e = mkEl(); w.els.set(id, e); } return e; };
+  w.$ = $;
   class AudioContext {
     constructor() { this.sampleRate = 48000; this.destination = {}; this.closed = false; }
     createMediaStreamSource(stream) { const n = { stream, connect() {}, disconnect() {} }; w.taps.push({ ctx: this, track: stream.tracks[0] }); return n; }
@@ -17,9 +19,9 @@ function world(settings) {
     resume() { return Promise.resolve(); }
     close() { this.closed = true; }
   }
-  w.K = load(['kit.js', 'caption.js'], { S: w.S, $: () => el, toast() {}, AudioContext, MediaStream: class { constructor(t) { this.tracks = t; } },
+  w.K = load(['kit.js', 'caption.js'], { S: w.S, $, toast() {}, AudioContext, MediaStream: class { constructor(t) { this.tracks = t; } },
     api: { captionOn: async (pub) => { w.on.push(pub); return true; }, captionOff: async (pub) => { w.off++; w.offs.push(pub); return true; }, captionPcm() {},
-      send: async (pub, m) => { w.sent.push({ pub, ...m }); return m; } } });
+      send: async (pub, m) => { w.sent.push({ pub, ...m }); return m; }, capLive: async (pub, m) => { w.live.push({ pub, ...m }); return true; } } });
   w.K.sessions = { all: () => w.list };
   w.K.viewer = { bound: null };
   w.K.mic = { state: 'idle', src: null, voice: null, mix: null };
@@ -144,4 +146,37 @@ function world(settings) {
   w.K.caption.sync();
   w.micUp(); w.soundUp(); w.hears('dave'); w.K.caption.sync();
   ok('O5 watching them, then my voice and sound go to them: the recognizer leaves their voice for my two', w.liveTap().length === 2 && w.on.join() === 'dave,~self,~sound' && w.offs.join() === 'dave');
+
+  // O6: the live line, streamed ahead of each finished one
+  w = world({ captionsOut: true });
+  w.micUp(); w.hears('bob'); w.soundUp(); w.K.caption.sync();
+  w.say('So the first sl', false, '~self');
+  ok('O6 a line still forming is streamed live, to whoever hears me, and not stored', w.live.length === 1 && w.live[0].pub === 'bob' && w.live[0].text === 'So the first sl' && w.live[0].lang === '' && w.sent.length === 0);
+  w.say('So the first slide.', true, '~self');
+  await tick();
+  ok('O6 the finished line is the stored caption, no new live frame', w.sent.length === 1 && w.sent[0].kind === 'caption' && w.live.length === 1);
+  w.say('Welcome to the de', false, '~sound');
+  ok('O6 the live line of the computer sound is marked sound', w.live.length === 2 && w.live[1].lang === 'sound' && w.live[1].text === 'Welcome to the de');
+  ok('O6 each live frame has a higher seq than the last', w.live[1].seq > w.live[0].seq);
+  w.hears('carol'); w.say('More soon', false, '~self');
+  ok('O6 the live line goes to everyone who hears me', w.live.slice(-2).map((x) => x.pub).sort().join() === 'bob,carol');
+  const before6 = w.live.length;
+  w.say('(music)', false, '~sound'); w.say('   ', false, '~self');
+  ok('O6 noise and blank make no live line', w.live.length === before6);
+
+  // O7: captions a contact streams to me - received, shown live, cleared by the finished message
+  w = world({ captions: true });
+  w.S.current = 'dave';
+  w.K.viewer.bound = { pub: 'dave', remote: { audio: w.track('their-voice') } };
+  w.K.caption.onLive({ pub: 'dave', text: 'We finished the scr', lang: '', seq: 1 });
+  ok('O7 a contact streaming to me counts as receiving, another contact does not', w.K.caption.receiving('dave') === true && w.K.caption.receiving('eve') === false);
+  w.K.caption.sync();
+  ok('O7 so my own recognizer does not also read their share', w.liveTap().length === 0);
+  ok('O7 the live line shows under the open chat', w.$('capLive').textContent === 'We finished the scr' && w.$('capLive').hidden === false);
+  ok('O7 and the same text is the subtitle over their screen', w.$('viewerCaptions').textContent === 'We finished the scr');
+  w.K.caption.onLive({ pub: 'dave', text: 'stale', lang: '', seq: 0 });   // older seq, within the window
+  ok('O7 a live frame that arrives out of order is ignored', w.$('capLive').textContent === 'We finished the scr');
+  w.K.caption.onFinal('dave', { kind: 'caption', text: 'We finished the screen work.', lang: '' });
+  ok('O7 the finished message clears the live line', w.$('capLive').textContent === '' && w.$('capLive').hidden === true);
+  ok('O7 the finished line stays as the subtitle over their screen', w.$('viewerCaptions').textContent === 'We finished the screen work.');
 })().catch((e) => { console.log('FAIL  caption test threw:', e.stack); process.exitCode = 1; });

@@ -5,7 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   state: call('state'), setName: call('setName'), invite: call('invite'),
   addContact: call('addContact'), removeContact: call('removeContact'), renameContact: call('renameContact'),
   setVerified: call('setVerified'), contact: call('contact'), conversation: call('conversation'), conversationPeek: call('conversationPeek'),
-  send: call('send'), typing: call('typing'), requestHistory: call('requestHistory'), wipeConversation: call('wipeConversation'),
+  send: call('send'), typing: call('typing'), capLive: call('capLive'), requestHistory: call('requestHistory'), wipeConversation: call('wipeConversation'),
   screenshot: call('screenshot'), saveImage: call('saveImage'), copyImage: call('copyImage'), fetchImage: call('fetchImage'), openScreenSettings: call('openScreenSettings'),
   share: call('share'), iceConfig: call('iceConfig'), fullscreen: call('fullscreen'), keysRemote: call('keysRemote'), runHotkey: call('runHotkey'), viewerClose: call('viewerClose'), viewerFront: call('viewerFront'),
   captionOn: call('captionOn'), captionOff: call('captionOff'), captionPcm: (pub, buf) => ipcRenderer.send('caption-pcm', pub, buf), recordStart: call('recordStart'), recordChunk: call('recordChunk'), recordStop: call('recordStop'), openRecordings: call('openRecordings'), controlGrant: call('controlGrant'), controlRevoke: call('controlRevoke'), captureEnded: call('captureEnded'), clipStart: call('clipStart'), clipPoke: call('clipPoke'), clipApply: call('clipApply'), clipStop: call('clipStop'), devClip: call('devClip'), input: (token, ev) => ipcRenderer.send('input', token, ev), micPermission: call('micPermission'), screenPermission: call('screenPermission'),

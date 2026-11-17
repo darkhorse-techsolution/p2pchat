@@ -772,6 +772,7 @@ handle('saveImage', async (_e, pub, id) => {
   return true;
 });
 handle('typing', (_e, pub) => { engine.sendTyping(pub); return true; });
+handle('capLive', (_e, pub, m) => { engine.sendCapLive(pub, m); return true; });
 handle('requestHistory', (_e, pub) => { engine.requestHistory(pub); return true; });
 handle('wipeConversation', (_e, pub) => { store.wipeConversation(pub); return true; });
 handle('protection', (_e, v) => setProtection(v));
@@ -855,7 +856,7 @@ async function boot() {
   if (settings().captions || settings().captionsOut) captioner.setEnabled(true);   // opt-in: downloads the engine + model once, then runs a hidden WASM window
 
   engine = new Engine(store, new Transport());
-  for (const ev of ['contact', 'status', 'update', 'history', 'typing', 'error', 'info', 'discovered', 'relay', 'share']) engine.on(ev, (d) => push(ev, d));
+  for (const ev of ['contact', 'status', 'update', 'history', 'typing', 'error', 'info', 'discovered', 'relay', 'share', 'capline']) engine.on(ev, (d) => push(ev, d));
   const sharePops = createSharePops();
   engine.on('share', (f) => { if (sharePops.wants(f)) showPopup({ pub: f.pub, name: store.contact(f.pub)?.name || 'A contact', text: '', kind: 'share' }); });
   engine.on('ua', (f) => unattended.onFrame(f));
