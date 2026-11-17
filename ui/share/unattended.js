@@ -3,7 +3,9 @@
 // (main/unattended.js): it checks the password a contact was given and only then calls start() here.
 //
 // Host (this machine is the one being accessed): start() sends that contact this screen the ordinary
-// way (K.cast.add), without the microphone: nobody is here to say that the room may be heard. The
+// way (K.cast.add). The microphone (and this computer's sound, and captions) go too only when the owner
+// turned on "unattended audio" in Settings: otherwise nobody is here to say that the room may be heard,
+// so the screen goes alone. When audio does go, the notice on screen says so and offers to mute it. The
 // contact is kept in `hosted` until that share ends, for whatever reason. While it is hosted, its
 // request for control is allowed without the dialog (share/control.js asks hosts()): the owner of
 // this machine gave that answer beforehand, in the contact's info. Main is told who is hosted on
@@ -23,15 +25,38 @@
   const say = (line) => window.api.log(`unattended: ${line}`).catch(() => {});   // to the app log: who was let in, and what became of it
   const starting = new Set();    // contacts whose unattended share is being started
   let told = '';
+  // Settings, "In an unattended session, also send your microphone, this computer's sound and captions":
+  // off by default. When on, an unattended share carries audio exactly as a share the owner starts.
+  const withAudio = () => typeof S !== 'undefined' && !!(S.settings && S.settings.unattendedAudio);
+  // What this machine is actually sending to the hosted contacts right now: whether the microphone is on
+  // (and so whether its sound and captions ride with it). null when no hosted session carries audio.
+  function audio() {
+    if (!withAudio() || !hosted.size) return null;
+    let has = false, on = false;
+    for (const p of hosted) { const x = K.sessions.get(p); if (x && x.micTrack) { has = true; if (x.micTrack.enabled) on = true; } }
+    if (!has) return null;
+    return { on, sound: on && !!(K.capture && K.capture.sound), cap: on && !!(S.settings && S.settings.captionsOut) };
+  }
   // The notice is part of the picture every viewer gets, so it names the contact only when that
-  // contact is the whole audience; with anyone else watching it counts.
+  // contact is the whole audience; with anyone else watching it counts. When audio goes out it says so.
   function sync() {
     const n = hosted.size, only = n === 1 && K.cast.members.size === 1 ? K.nameOf([...hosted][0]) : '';
-    const text = !n ? '' : only ? `${only} is connected to this computer` : n === 1 ? 'A contact is connected to this computer' : `${n} contacts are connected to this computer`;
-    const now = JSON.stringify([[...hosted].sort(), text]);
+    const base = !n ? '' : only ? `${only} is connected to this computer` : n === 1 ? 'A contact is connected to this computer' : `${n} contacts are connected to this computer`;
+    const a = audio();
+    const suffix = !n || !a ? '' : a.on ? ` · microphone on${a.sound ? ' + sound' : ''}${a.cap ? ' + captions' : ''}` : ' · microphone muted';
+    const text = base + suffix;
+    const now = JSON.stringify([[...hosted].sort(), text, a ? a.on : null]);
     if (now === told) return;
     told = now;
-    window.api.uaLive({ pubs: [...hosted], text }).catch(() => {});
+    window.api.uaLive({ pubs: [...hosted], text, audio: a ? { on: a.on } : null }).catch(() => {});
+  }
+  // The Mute button on the notice: flips the microphone for everyone connected unattended (one microphone,
+  // one switch, like the share bar). Reuses the ordinary audience mute through a session that carries it.
+  function muteToggle() {
+    const pub = [...hosted].find((p) => { const x = K.sessions.get(p); return x && x.micTrack; });
+    if (!pub) return;
+    K.cast.talk(K.sessions.get(pub));
+    sync();
   }
   // main: the password was right. Resolves { ok } or { ok: false, why } with a reason the visitor is told.
   async function start(pub) {
@@ -43,7 +68,7 @@
     if ((!inAudience && K.cast.count() >= K.tune.MAX_AUDIENCE) || (!K.sessions.get(pub) && K.sessions.map.size >= K.MAX_SESSIONS)) return { ok: false, why: 'busy' };
     starting.add(pub);
     let ok = false;
-    try { ok = await K.cast.add(pub, 'one', { mic: false }); } catch (e) { console.error('unattended start', e); }
+    try { ok = await K.cast.add(pub, 'one', withAudio() ? {} : { mic: false }); } catch (e) { console.error('unattended start', e); }
     if (!starting.delete(pub)) { if (ok) K.cast.remove(pub); return { ok: false, why: 'off' }; }   // stopped while the capture was starting
     if (!ok) return { ok: false, why: 'capture' };
     hosted.add(pub); say(`hosting ${pub.slice(0, 8)}`);
@@ -136,5 +161,5 @@
   $('uaGo').onclick = go;
   $('uaPass').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
 
-  K.unattended = { start, stop, left, said, sync, onNote, maybeAsk, openDialog, hosts: (pub) => hosted.has(pub), hosted: () => [...hosted], wanted: () => [...wanted.keys()] };
+  K.unattended = { start, stop, left, said, sync, muteToggle, onNote, maybeAsk, openDialog, hosts: (pub) => hosted.has(pub), hosted: () => [...hosted], wanted: () => [...wanted.keys()] };
 })();

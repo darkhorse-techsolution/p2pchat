@@ -673,7 +673,7 @@ handle('clipStop', (_e, id) => { if (clip.status().id === String(id)) clip.stop(
 // (main/accesscard.js); if the notice cannot be shown or goes away, the page is told to end those sessions.
 let uaLive = [];   // the contacts the page says are connected unattended right now
 const accessCard = createAccessCard({ BrowserWindow, ipcMain, screen, preload: path.join(__dirname, 'access-preload.js'), page: path.join(__dirname, '..', 'ui', 'access.html'), isMac, isLinux, log,
-  onStop: () => push('unattended', { op: 'stop' }), onGone: () => { uaLive = []; push('unattended', { op: 'stop' }); } });
+  onStop: () => push('unattended', { op: 'stop' }), onMute: () => push('unattended', { op: 'mute' }), onGone: () => { uaLive = []; push('unattended', { op: 'stop' }); } });
 const endUnattended = () => { uaLive = []; accessCard.hide(); };   // the page that held those sessions is gone
 // The page starts the share. Nobody clicks for this capture: Electron 45 starts one without a user
 // gesture (run on Linux), and the call carries one for a Chromium that asks for it. An answer that
@@ -704,7 +704,7 @@ handle('uaLive', (_e, o) => {
   const pubs = Array.isArray(o && o.pubs) ? o.pubs.filter((p) => typeof p === 'string' && !!store.contact(p)).slice(0, 8) : [];
   if (pubs.length !== uaLive.length) log.info('unattended access: connected now', pubs.length);
   uaLive = pubs;
-  if (pubs.length) accessCard.show({ text: String((o && o.text) || ''), theme: popupTheme(), display: sharedDisplay && screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) });
+  if (pubs.length) accessCard.show({ text: String((o && o.text) || ''), audio: o && o.audio ? { on: !!o.audio.on } : null, theme: popupTheme(), display: sharedDisplay && screen.getAllDisplays().find((x) => x.id === sharedDisplay.id) });
   else accessCard.hide();
   return pubs.length;
 });
@@ -781,7 +781,7 @@ handle('setFullHotkey', (_e, accel) => registerShortcut('fullHotkey', String(acc
 handle('setMode', (_e, m) => applyMode(m));
 // UI preferences live in the same encrypted vault as everything else and come back on restart.
 const PREFS = { sidebarWidth: (v) => Math.min(480, Math.max(220, Number(v) || 300)), sidebarCollapsed: (v) => !!v, codeWrap: (v) => !!v, codeCollapse: (v) => !!v,
-  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, captionsOut: (v) => !!v, shareSound: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
+  shareMode: (v) => (v === 'two' ? 'two' : 'one'), callsRelayOnly: (v) => !!v, recordShares: (v) => !!v, clipboardSync: (v) => !!v, captions: (v) => !!v, captionsOut: (v) => !!v, shareSound: (v) => !!v, unattendedAudio: (v) => !!v, viewerWindow: (v) => !!v, videoCodec: (v) => (v === 'sharp' ? 'sharp' : 'smooth'), assistantBridge: (v) => !!v, turn: (v) => String(v || '').trim().slice(0, 200), turnUser: (v) => String(v || '').trim().slice(0, 200), turnPass: (v) => String(v || '').slice(0, 200) };
 // One recognizer serves both caption settings: their voice over the video, my voice into the chat.
 handle('setPref', (_e, key, value) => { if (!Object.hasOwn(PREFS, key)) throw new Error('unknown pref'); settings()[key] = PREFS[key](value); if (key === 'clipboardSync' && !settings().clipboardSync) clip.stop('setting'); if (key === 'captions' || key === 'captionsOut') captioner.setEnabled(!!(settings().captions || settings().captionsOut)); if (key === 'assistantBridge') bridge.setEnabled(settings().assistantBridge); store.saveSoon(); push('settings', settings()); return settings()[key]; });
 handle('openExternal', (_e, url) => { const u = String(url || ''); if (!/^https?:\/\/[^\s]+$/i.test(u) || u.length > 2048) return false; shell.openExternal(u); return true; });

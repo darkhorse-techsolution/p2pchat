@@ -11,7 +11,8 @@
 // and I see each line in my own copy of the chat as it goes out. Nothing while the microphone is muted. When this
 // computer's sound goes out with the share too (Settings, "Also send this computer's sound"), it is read as a
 // second stream of its own, and its lines are sent marked as the computer's sound, never as my words. Only what
-// actually goes out is read, so nothing of either in an unattended share. There is one recognizer: while it reads
+// actually goes out is read: an unattended share reads neither unless the owner turned on unattended audio, which
+// gives it a real microphone the same as any share. There is one recognizer: while it reads
 // this computer, the captions over a share I watch pause.
 //
 // Reads from app.js: S, $, toast. Reads K.viewer, K.mic, K.capture and K.sessions at call time.

@@ -1121,7 +1121,7 @@ const idle = async () => { for (let i = 0; i < 25; i++) await tick(); };
     ok('A2 with anyone else watching the notice names nobody', w.live.length === 2 && w.live[1].text.startsWith('A contact is connected'));
     K.capture.state = 'live';
     K.sessions.close(bob, 'offline');
-    ok('A2 a hosted contact that goes offline is out, not kept as reconnecting, and main is told', !K.cast.members.has('bob') && !U.hosts('bob') && js(w.live[w.live.length - 1]) === js({ pubs: [], text: '' }));
+    ok('A2 a hosted contact that goes offline is out, not kept as reconnecting, and main is told', !K.cast.members.has('bob') && !U.hosts('bob') && js(w.live[w.live.length - 1]) === js({ pubs: [], text: '', audio: null }));
     K.sessions.close(cy, 'offline');
     ok('A2 ... while an ordinary viewer is kept as away', !!K.cast.members.get('cy') && K.cast.members.get('cy').state === 'away');
     const dee = w.sess('dee', true); dee.local = { removeTrack() {} }; K.cast.members.delete('dee');
@@ -1138,6 +1138,14 @@ const idle = async () => { for (let i = 0; i < 25; i++) await tick(); };
     for (const n of ['f1', 'f2', 'f3', 'f4']) K.cast.members.set(n, { state: 'live', mode: 'one', timer: null, back: null });
     w.S.contacts.push({ pub: 'gus', name: 'Gus', status: 'online' });
     ok('A2 a full audience: busy, and nothing is started', (await U.start('gus')).why === 'busy');
+
+    // the audio opt-in flips the one decision this file owns: the share starts with audio instead of screen only
+    const v = pageWorld(), VK = v.K, VU = VK.unattended, vadds = [];
+    v.sess('hal', true); VK.cast.members.delete('hal');
+    VK.cast.add = async (pub, mode, opts) => { vadds.push(opts); VK.cast.members.set(pub, { state: 'live', mode, timer: null, back: null }); return true; };
+    v.S.settings.unattendedAudio = true;
+    await VU.start('hal');
+    ok('A2 with unattended audio on: the share starts with the microphone, not the screen alone', js(vadds) === js([{}]));
   })().catch((e) => { console.log('FAIL  A2 threw:', e.stack); process.exitCode = 1; });
 }
 

@@ -20,8 +20,9 @@
   // Settings, "Also send this computer's sound when I share": what plays here (a clip, a video) goes out with the
   // microphone. The capture of the display brings the sound (macOS and Windows), and it is mixed with the microphone
   // into the one audio track a contact gets, so nothing changes on their side and the microphone button mutes all of
-  // it. Only in a share somebody is at: an unattended share sends no audio at all. Captions of my voice read the
-  // microphone alone (mic.voice), never this mix.
+  // it. An unattended share sends no audio unless the owner turned on "unattended audio" (share/unattended.js); then
+  // it carries the microphone and this sound like any share. Captions of my voice read the microphone alone
+  // (mic.voice), never this mix.
   const wantSound = () => typeof S !== 'undefined' && !!(S.settings && S.settings.shareSound) && (window.api.platform === 'darwin' || window.api.platform === 'win32');
   function mixer(voice, sound) {
     const ctx = new AudioContext(), dest = ctx.createMediaStreamDestination(), nodes = { voice: null, sound: null };
@@ -139,7 +140,7 @@
   // neither device is stopped under a call that has not taken its lease yet. After every await the call
   // checks that the session is still open and still its own: Stop or a closed session ends it there,
   // and nothing more is attached. `opts.mic === false`: the screen alone, whatever the microphone is doing
-  // (an unattended share: nobody is here to say that the room may be heard).
+  // (an unattended share with its audio off: nobody is here to say that the room may be heard).
   async function add(pub, mode, opts) {
     const noMic = !!opts && opts.mic === false;
     const c = contact(pub);

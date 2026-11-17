@@ -9,16 +9,17 @@
 // The session depends on the notice, not the other way round: if the window cannot be shown or goes
 // away while a session runs, `onGone` ends the session.
 // Kept apart from main.js; it gets Electron's parts handed in.
-const W = 300, H = 40;   // a small pill, not a banner: it stays as the one on-screen sign that a contact is connected, kept out of the way
+const W = 300, W_AUDIO = 392, H = 40;   // a small pill, not a banner: it stays as the one on-screen sign that a contact is connected, kept out of the way. Wider when it also carries the Mute button.
 
-function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac, isLinux, onStop, onGone, log }) {
+function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac, isLinux, onStop, onMute, onGone, log }) {
   let card = null, live = false, last = null;
   const mine = (e) => !!card && !card.isDestroyed() && e.sender === card.webContents;
   ipcMain.on('access-stop', (e) => { if (mine(e)) { log.info('unattended access: Disconnect clicked on the notice'); onStop(); } });
+  ipcMain.on('access-mute', (e) => { if (mine(e) && onMute) { log.info('unattended access: Mute clicked on the notice'); onMute(); } });
 
-  function place(display, h) {
+  function place(display, h, w) {
     const d = (display || screen.getPrimaryDisplay()).workArea;
-    card.setBounds({ x: Math.round(d.x + (d.width - W) / 2), y: Math.round(d.y + d.height - h - 14), width: W, height: h });
+    card.setBounds({ x: Math.round(d.x + (d.width - w) / 2), y: Math.round(d.y + d.height - h - 14), width: w, height: h });
   }
   function ensure() {
     if (card && !card.isDestroyed()) return card;
@@ -40,10 +41,11 @@ function createAccessCard({ BrowserWindow, ipcMain, screen, preload, page, isMac
     return w;
   }
   // text: who is connected, as the page worded it. theme: 'dark' | 'light'. display: the one that is shared.
-  function show({ text, theme, display }) {
-    live = true; last = { text: String(text || '').slice(0, 200), theme, solid: isLinux };
+  // audio: null = screen only; { on } = the microphone is going out, so the notice carries a Mute button.
+  function show({ text, theme, display, audio }) {
+    live = true; last = { text: String(text || '').slice(0, 200), theme, solid: isLinux, audio: audio ? { on: !!audio.on } : null };
     let w;
-    try { w = ensure(); place(display, H); } catch (e) { live = false; log.error('unattended access: the notice could not be made', e); onGone(); return false; }
+    try { w = ensure(); place(display, H, audio ? W_AUDIO : W); } catch (e) { live = false; log.error('unattended access: the notice could not be made', e); onGone(); return false; }
     const send = () => { if (card === w && live) { w.webContents.send('access', last); if (!w.isVisible()) w.showInactive(); w.moveTop(); } };
     if (w.webContents.isLoading()) w.webContents.once('did-finish-load', send); else send();
     return true;

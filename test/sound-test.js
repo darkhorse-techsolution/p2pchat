@@ -5,7 +5,8 @@ const { load } = require('./share-world.js');
 const ok = (n, v) => { console.log((v ? 'PASS' : 'FAIL').padEnd(5), n); if (!v) process.exitCode = 1; };
 
 function world({ platform = 'darwin', shareSound = true, soundTrack = 'live', micOk = true } = {}) {
-  const w = { toasts: [], gdmArgs: [], ctxs: [], held: new Map(), states: [], micOk, soundTrack, S: { capture: { supported: true }, protection: true, settings: { shareSound } } };
+  const w = { toasts: [], gdmArgs: [], ctxs: [], held: new Map(), states: [], ua: [], micOk, soundTrack, S: { capture: { supported: true }, protection: true, settings: { shareSound } } };
+  const elStub = () => ({ onclick: null, value: '', textContent: '', disabled: false, addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} } });
   const track = (kind, from) => ({ kind, from: from || null, enabled: true, readyState: 'live', contentHint: '', stop() { this.readyState = 'ended'; }, clone() { return track(kind, this.from || this); }, applyConstraints: async () => {}, getSettings: () => ({ width: 1920 }) });
   class AudioContext {
     constructor() { this.closed = false; this.nodes = []; this.out = track('mix'); w.ctxs.push(this); }
@@ -14,17 +15,17 @@ function world({ platform = 'darwin', shareSound = true, soundTrack = 'live', mi
     resume() { return Promise.resolve(); }
     close() { this.closed = true; }
   }
-  w.K = load(['kit.js', 'tune.js', 'cast.js'], { toast: (t) => w.toasts.push(t), renderContacts() {}, S: w.S, contact: (pub) => ({ pub, name: pub, status: 'online' }), showScreenPermission() {}, console: { warn() {}, error() {}, log() {} },
+  w.K = load(['kit.js', 'tune.js', 'cast.js', 'unattended.js'], { toast: (t) => w.toasts.push(t), renderContacts() {}, S: w.S, contact: (pub) => ({ pub, name: pub, status: 'online' }), showScreenPermission() {}, console: { warn() {}, error() {}, log() {} }, $: elStub, show() {}, openModal: null, closeModal() {}, ipcErr: (e) => String((e && e.message) || e),
     AudioContext, MediaStream: class { constructor(t) { this.tracks = t || []; } addTrack() {} removeTrack() {} },
     navigator: { mediaDevices: {
       getDisplayMedia: async (c) => { w.gdmArgs.push(c); w.video = track('video'); w.sound = w.soundTrack === 'none' ? null : track('sound'); if (w.sound && w.soundTrack === 'ended') w.sound.readyState = 'ended';
         return { getVideoTracks: () => [w.video], getAudioTracks: () => (c.audio && w.sound ? [w.sound] : []) }; },
       getUserMedia: async () => { w.voice = track('voice'); return { getAudioTracks: () => [w.voice] }; } } },
-    api: { platform, screenPermission: async () => 'ok', micPermission: async () => w.micOk, captureEnded: async () => true } });
+    api: { platform, screenPermission: async () => 'ok', micPermission: async () => w.micOk, captureEnded: async () => true, log: async () => {}, uaLive: async (o) => { w.ua.push(o); return o.pubs.length; } } });
   w.K.paint = () => {}; w.K.control = { owner: null, endGive() {} }; w.K.clip = { link: null };
   w.mk = (pub) => { const x = { pub, closed: false, seen: false, ready: Promise.resolve(), mode: 'one', local: { addTrack() {}, removeTrack() {} }, screenTrack: null, micTrack: null, screenSender: null, micSender: null, micStream: null, scaled: false, remote: { screen: false, mic: false, rec: false }, ctl: { give: 'off' },
     pc: { addTrack: (t) => ({ track: t, getParameters: () => ({ encodings: [{}] }), setParameters: async () => {} }), removeTrack() {}, getTransceivers: () => [] } }; w.held.set(pub, x); return x; };
-  w.K.sessions = { get: (pub) => w.held.get(pub) || null, open: (pub) => w.mk(pub), all: () => [...w.held.values()], openChannels() {}, dc: () => true, sendState() {}, close: (x, why) => { x.closed = true; w.held.delete(x.pub); w.K.cast.sessionClosed(x, why); } };
+  w.K.sessions = { map: w.held, get: (pub) => w.held.get(pub) || null, open: (pub) => w.mk(pub), all: () => [...w.held.values()], openChannels() {}, dc: () => true, sendState() {}, close: (x, why) => { x.closed = true; w.held.delete(x.pub); w.K.cast.sessionClosed(x, why); } };
   w.inputs = () => (w.K.mic.mix ? w.ctxs[w.ctxs.length - 1].nodes.filter((n) => n.on).map((n) => n.track.kind).sort().join('+') : 'no mix');
   return w;
 }
@@ -99,4 +100,27 @@ function world({ platform = 'darwin', shareSound = true, soundTrack = 'live', mi
   w = world();
   await w.K.cast.add('box', 'one', { mic: false });
   ok('A7 a share that starts unattended: no sound asked for, no audio sent', w.gdmArgs[0].audio === false && !w.held.get('box').micTrack && !w.K.capture.sound && w.ctxs.length === 0);
+
+  // A8: an unattended session carries audio only when the owner allows it (Settings "unattended audio")
+  w = world();   // the setting off (default)
+  await w.K.unattended.start('box');
+  ok('A8 off: the unattended contact gets the screen alone, no microphone, no sound', !w.held.get('box').micTrack && !w.K.capture.sound && w.gdmArgs[0].audio === false);
+  ok('A8 off: the notice says only who is connected, no audio, and offers no mute', /is connected to this computer$/.test(w.ua.at(-1).text) && w.ua.at(-1).audio === null);
+
+  w = world();   // shareSound on, captionsOut on, unattendedAudio on
+  w.S.settings.unattendedAudio = true; w.S.settings.captionsOut = true;
+  await w.K.unattended.start('box');
+  const s = w.held.get('box');
+  ok('A8 on: the unattended contact gets the microphone, mixed with the computer\'s sound', s.micTrack && s.micTrack.kind === 'mix' && s.micTrack.enabled === true && w.K.capture.sound === w.sound);
+  ok('A8 on: the capture of my voice alone is there for captions, never the mix', w.K.mic.voice === w.voice && w.K.mic.voice.kind === 'voice');
+  ok('A8 on: the notice says the microphone is live, with sound and captions, and the mute shows', /microphone on \+ sound \+ captions/.test(w.ua.at(-1).text) && w.ua.at(-1).audio.on === true);
+  w.K.unattended.muteToggle();
+  ok('A8 Mute on the notice mutes the microphone for the connected contact', s.micTrack.enabled === false && /microphone muted/.test(w.ua.at(-1).text) && w.ua.at(-1).audio.on === false);
+  w.K.unattended.muteToggle();
+  ok('A8 Mute again unmutes it', s.micTrack.enabled === true && w.ua.at(-1).audio.on === true);
+
+  w = world({ shareSound: false });   // on, but no computer sound: the microphone alone
+  w.S.settings.unattendedAudio = true;
+  await w.K.unattended.start('box');
+  ok('A8 on without the sound setting: the microphone, no mix, and the notice says microphone on, no sound', w.held.get('box').micTrack.kind === 'voice' && !w.K.mic.mix && /microphone on$/.test(w.ua.at(-1).text));
 })().catch((e) => { console.log('FAIL  sound test threw:', e.stack); process.exitCode = 1; });
